@@ -1,0 +1,2074 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1E5A7A">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>ライフプランシミュレーター</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&family=Roboto+Mono:wght@500&display=swap">
+<style>
+/* Layout: 左にメニュー、右に作業領域。スマホでは下タブ。数字は等幅で縦にそろえる */
+:root {
+  --bg: #F3F5F7; --surface: #FFFFFF; --surface-2: #EEF2F5; --fg: #1B2430; --muted: #586374; --line: #DDE3E9;
+  --accent: #1E5A7A; --accent-soft: #E3EEF4; --on-accent: #FFFFFF;
+  --warn: #A64B12; --warn-soft: #FBEFE4; --bad: #B4441F; --good: #2F7D55;
+  --c-parent: #1E5A7A; --c-kid: #7FB3CF; --c-tax: #D9822B; --c-ideco: #7A65B8; --c-cash: #B7BFC9;
+  --grid: #E3E8ED; --axis: #9AA5B1; --live: #1B2430; --on-live: #FFFFFF; --live-muted: #C9D4DE;
+  --font-body: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic UI', system-ui, sans-serif;
+  --font-num: 'Roboto Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0F1720; --surface: #18222D; --surface-2: #202C39; --fg: #E8EDF2; --muted: #9AA8B6; --line: #2C3946;
+  --accent: #6FB0D6; --accent-soft: #1D3342; --on-accent: #0F1720;
+  --warn: #F0A868; --warn-soft: #3A2A1C; --bad: #F08A6C; --good: #7CC6A0;
+  --c-parent: #4E9AC7; --c-kid: #A9D3EA; --c-tax: #E9A15A; --c-ideco: #A897DE; --c-cash: #6B7785;
+  --grid: #26323F; --axis: #4A5868; --live: #E8EDF2; --on-live: #0F1720; --live-muted: #3F4A58; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0F1720; --surface: #18222D; --surface-2: #202C39; --fg: #E8EDF2; --muted: #9AA8B6; --line: #2C3946;
+  --accent: #6FB0D6; --accent-soft: #1D3342; --on-accent: #0F1720;
+  --warn: #F0A868; --warn-soft: #3A2A1C; --bad: #F08A6C; --good: #7CC6A0;
+  --c-parent: #4E9AC7; --c-kid: #A9D3EA; --c-tax: #E9A15A; --c-ideco: #A897DE; --c-cash: #6B7785;
+  --grid: #26323F; --axis: #4A5868; --live: #E8EDF2; --on-live: #0F1720; --live-muted: #3F4A58; color-scheme: dark }
+
+html, body { background: var(--bg); }
+body { color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.6; }
+.num, td, .kpi-val, input.n { font-variant-numeric: tabular-nums; }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a { color: var(--accent); }
+
+.shell { display: flex; align-items: flex-start; gap: 8px; max-width: 1440px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.side { flex: 0 0 196px; position: sticky; top: env(safe-area-inset-top, 0px); padding-block: 24px; display: flex; flex-direction: column; gap: 4px; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 12px 20px; font-weight: 700; font-size: 16px; }
+.side a { display: block; padding: 10px 14px; border-radius: 10px; color: var(--muted); text-decoration: none; font-size: 15px; }
+.side a[aria-current="page"] { background: var(--surface); color: var(--fg); font-weight: 700; box-shadow: 0 1px 2px rgba(20,30,45,.08); }
+.side a:hover { color: var(--fg); }
+main { flex: 1 1 auto; min-width: 0; padding-block: 24px 64px; display: flex; flex-direction: column; gap: 20px; }
+.tabbar { display: none; }
+@media (max-width: 760px) {
+  .side { display: none; }
+  main { padding-block: 16px 150px; }
+  .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--surface); border-top: 1px solid var(--line);
+    padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+  .tabbar a { flex: 1; min-height: 56px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted); text-decoration: none; }
+  .tabbar a[aria-current="page"] { color: var(--accent); font-weight: 700; }
+}
+
+.head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.head h1 { font-size: 26px; }
+.sub { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+.card { background: var(--surface); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.card h2 { font-size: 17px; }
+.card h3 { font-size: 15px; }
+.row { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.row > .wide { flex: 999 1 520px; min-width: 0; }
+.row > .narrow { flex: 1 1 280px; min-width: 0; }
+.grid-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.kpi { background: var(--surface); border-radius: var(--radius); padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; }
+.kpi-lbl { font-size: 13px; color: var(--muted); }
+.kpi-val { font-size: 26px; font-weight: 700; line-height: 1.3; }
+.kpi-val small { font-size: 14px; font-weight: 500; }
+.kpi-note { font-size: 12.5px; color: var(--muted); }
+.meter { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.meter > div { height: 100%; background: var(--accent); border-radius: 4px; }
+
+.btn { min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); font-size: 14px; font-weight: 500; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn:hover { border-color: var(--axis); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
+.btn.ghost { border-style: dashed; color: var(--accent); background: transparent; }
+.btn.small { min-height: 36px; padding: 0 12px; font-size: 13px; }
+.btn.danger { color: var(--bad); }
+.btn.icon { min-height: 36px; width: 36px; padding: 0; color: var(--muted); }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .tick { fill: var(--muted); font-size: 12px; font-family: var(--font-body); }
+.chart .grid { stroke: var(--grid); stroke-dasharray: 3 3; }
+.chart .axis { stroke: var(--axis); }
+.chart rect.hit { fill: transparent; }
+.chart g.bar:hover rect.hit { fill: var(--accent-soft); opacity: .5; }
+.insight { margin: 0; font-size: 14px; color: var(--fg); line-height: 1.8; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { padding: 5px 10px; border-radius: 8px; background: var(--surface-2); font-size: 13px; }
+.alert { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 10px; background: var(--warn-soft); color: var(--fg); font-size: 14px; }
+.alert b { color: var(--warn); }
+.ok { color: var(--good); font-weight: 700; }
+
+.tbl-wrap { overflow-x: auto; border-radius: var(--radius); background: var(--surface); }
+table.data { border-collapse: collapse; font-size: 13px; width: 100%; }
+table.data th, table.data td { padding: 9px 10px; text-align: right; white-space: nowrap; border-top: 1px solid var(--line); }
+table.data thead th { background: var(--surface-2); color: var(--muted); font-weight: 500; font-size: 12px; border-top: 0; position: sticky; top: 0; }
+table.data th.l, table.data td.l { text-align: left; }
+table.data tbody th { font-weight: 700; }
+table.data .stick { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+table.data thead .stick { background: var(--surface-2); z-index: 2; }
+table.data .neg { color: var(--bad); font-weight: 700; }
+table.data .tot { font-weight: 700; }
+table.data .memo { color: var(--muted); text-align: left; }
+table.data tr.mark td, table.data tr.mark th { background: var(--accent-soft); }
+.hide-flow .g-flow, .hide-inv .g-inv, .hide-acc .g-acc, .hide-living .g-living, .hide-detail .g-detail { display: none; }
+.toggles { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.toggle { min-height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; cursor: pointer; }
+.toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+.tabs { display: flex; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.tabs button { flex: none; min-height: 44px; padding: 0 14px; border: 0; border-bottom: 3px solid transparent; background: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+.tabs button[aria-selected="true"] { color: var(--fg); font-weight: 700; border-bottom-color: var(--accent); }
+
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px 16px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field .lbl { font-size: 13px; color: var(--muted); }
+.inp { display: flex; align-items: center; min-height: 44px; border: 1px solid var(--line); border-radius: 10px; padding: 0 10px; background: var(--surface); }
+.inp:focus-within { border-color: var(--accent); }
+.inp input, .inp select { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 16px; padding: 0; height: 42px; }
+.inp input.n { text-align: right; }
+.inp .unit { font-size: 12.5px; color: var(--muted); margin-left: 6px; white-space: nowrap; }
+.inp.sm { min-height: 40px; }
+.inp.sm input { height: 38px; font-size: 15px; }
+.check { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; font-size: 14px; }
+.check input { width: 22px; height: 22px; accent-color: var(--accent); flex: none; }
+.hint { font-size: 12.5px; color: var(--muted); margin: 0; line-height: 1.7; }
+.list { display: flex; flex-direction: column; }
+.list > .it { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.list > .it:first-child { border-top: 0; }
+.it .who { min-width: 76px; font-size: 14px; }
+.it .grow { flex: 1; min-width: 0; }
+.it .note { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); line-height: 1.4; }
+.it .note.warn { color: var(--warn); }
+.subcard { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.calc { font-size: 14px; } .calc b { font-size: 16px; }
+
+.matrix { overflow-x: auto; }
+.matrix table { border-collapse: collapse; font-size: 14px; }
+.matrix th, .matrix td { padding: 4px; }
+.matrix thead th { text-align: center; line-height: 1.3; padding-bottom: 8px; }
+.matrix thead th span { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+.matrix tbody th { text-align: left; font-weight: 500; white-space: nowrap; padding-right: 12px; min-width: 150px; }
+.matrix tbody th .meta { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: var(--muted); font-weight: 400; }
+.matrix input.cell { width: 76px; height: 38px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; text-align: right; padding: 0 8px; background: var(--surface); font-size: 14.5px; }
+.matrix input.cell.chg { border-color: var(--accent); background: var(--accent-soft); }
+.matrix tfoot td, .matrix tfoot th { border-top: 2px solid var(--fg); padding-top: 10px; font-weight: 700; text-align: center; }
+.matrix tfoot th { text-align: left; }
+.living-phone { display: none; }
+@media (max-width: 760px) { .living-pc { display: none; } .living-phone { display: flex; } }
+.agechips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.agechips button { flex: none; min-width: 64px; min-height: 52px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; line-height: 1.25; }
+.agechips button span { display: block; font-size: 11px; color: var(--muted); }
+.agechips button[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.agechips button[aria-checked="true"] span { color: var(--on-accent); }
+
+.live { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 15; background: var(--live); color: var(--on-live); border-radius: 12px; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; }
+.live .l { font-size: 12.5px; color: var(--live-muted); }
+.live .v { font-size: 19px; font-weight: 700; }
+.live .d { font-size: 12.5px; }
+@media (max-width: 760px) { .live .v { font-size: 16px; } .live { gap: 2px 10px; padding: 8px 14px; } .live { position: fixed; top: auto; left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); bottom: calc(64px + env(safe-area-inset-bottom, 0px)); } }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: var(--surface); font-family: var(--font-num); font-size: 12px; }
+.status { font-size: 13px; color: var(--muted); }
+.status.err { color: var(--bad); }
+.status.okk { color: var(--good); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(24px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 10px 18px; border-radius: 10px; font-size: 14px; z-index: 50; }
+@media (max-width: 760px) { .toast { bottom: calc(130px + env(safe-area-inset-bottom, 0px)); } }
+
+/* スマートディスプレイ表示(Fire HD 8 横向き)。常に暗い配色 */
+#display { position: fixed; inset: 0; z-index: 100; background: #0F1720; color: #E8EDF2; overflow: auto;
+  padding: calc(24px + env(safe-area-inset-top, 0px)) max(28px, env(safe-area-inset-right, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)) max(28px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; gap: 18px; }
+#display[hidden] { display: none !important; }
+.dp-top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.dp-top h1 { font-size: 28px; }
+.dp-muted { color: #9AA8B6; font-size: 15px; }
+.dp-close { min-height: 52px; padding: 0 24px; border-radius: 26px; border: 1px solid #3A4757; background: #18222D; color: #E8EDF2; font-size: 17px; cursor: pointer; }
+.dp-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.dp-card { background: #18222D; border-radius: 18px; padding: 18px 22px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dp-val { font-size: 34px; font-weight: 700; line-height: 1.25; }
+.dp-val small { font-size: 17px; font-weight: 500; }
+.dp-main { display: flex; flex-wrap: wrap; gap: 14px; flex: 1; }
+.dp-main .dp-card.wide { flex: 2 1 560px; }
+.dp-main .side-col { flex: 1 1 280px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+#display .tick { fill: #9AA8B6; font-size: 19px; }
+#display .grid { stroke: #2E3A48; stroke-dasharray: 3 3; }
+#display .axis { stroke: #4A5868; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+</head>
+<body>
+<div class="shell">
+  <nav class="side" aria-label="メインメニュー">
+    <div class="brand"><svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect x="1" y="1" width="26" height="26" rx="8" style="fill:var(--accent)"></rect><path d="M7 19l5-5 4 3 5-7" style="stroke:var(--on-accent);fill:none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>ライフプラン</div>
+    <a href="#home" data-nav="home">ホーム</a>
+    <a href="#input" data-nav="input">前提条件</a>
+    <a href="#table" data-nav="table">年次推移表</a>
+    <a href="#compare" data-nav="compare">シナリオ比較</a>
+    <a href="#sync" data-nav="sync">同期とデータ</a>
+  </nav>
+  <main id="view" aria-live="polite"></main>
+</div>
+<nav class="tabbar" aria-label="メインメニュー">
+  <a href="#home" data-nav="home">ホーム</a>
+  <a href="#input" data-nav="input">前提条件</a>
+  <a href="#table" data-nav="table">推移表</a>
+  <a href="#compare" data-nav="compare">比較</a>
+  <a href="#sync" data-nav="sync">同期</a>
+</nav>
+<div id="display" hidden></div>
+<div id="toast" class="toast" hidden role="status"></div>
+
+<script>
+/*
+ * ライフプランシミュレーター 計算エンジン v2
+ * PC・スマホのブラウザ版とスマートディスプレイの両方で使う共通プログラム。
+ * 入力(JSON)を受け取り、1年ごとの収支・口座残高を返す。金額はすべて円。
+ */
+(function (root) {
+  'use strict';
+
+  // 住宅ローン 元利均等返済の毎月返済額
+  function monthlyLoanPayment(principal, annualRate, years) {
+    const n = Math.round(years * 12);
+    if (principal <= 0 || n <= 0) return 0;
+    const i = annualRate / 12;
+    if (i === 0) return principal / n;
+    const f = Math.pow(1 + i, n);
+    return (principal * i * f) / (f - 1);
+  }
+
+  // 5年ごとなどの入力点の間を直線で補間(範囲外は端の値)。点は {age, amount}
+  function interpolate(points, x) {
+    if (!points || points.length === 0) return 0;
+    const p = points
+      .map((q) => ({ age: q.age != null ? q.age : q.headAge, amount: Number(q.amount) || 0 }))
+      .sort((a, b) => a.age - b.age);
+    if (x <= p[0].age) return p[0].amount;
+    const last = p[p.length - 1];
+    if (x >= last.age) return last.amount;
+    for (let k = 0; k < p.length - 1; k++) {
+      const a = p[k], b = p[k + 1];
+      if (x >= a.age && x <= b.age) {
+        if (b.age === a.age) return b.amount;
+        return a.amount + (b.amount - a.amount) * ((x - a.age) / (b.age - a.age));
+      }
+    }
+    return last.amount;
+  }
+
+  function inRange(year, from, to) {
+    return (from == null || year >= from) && (to == null || year <= to);
+  }
+
+  // 児童手当(2024年10月以降の制度):高校生年代まで、所得制限なし
+  //   3歳未満 月1.5万円、3歳以上 月1万円、第3子以降は月3万円(第3子の数え方は22歳年度末までの子)
+  function childAllowanceFor(children, idx, year) {
+    const age = year - children[idx].birthYear;
+    if (age < 0 || age > 18) return 0;
+    const olderInCount = children.slice(0, idx).filter((c) => {
+      const a = year - c.birthYear;
+      return a >= 0 && a <= 22;
+    }).length;
+    if (olderInCount >= 2) return 30000 * 12;
+    return (age < 3 ? 15000 : 10000) * 12;
+  }
+
+  // 口座から手取り額 net を得るために売却する
+  function sell(acc, net, taxRate, isTaxable) {
+    if (net <= 0 || acc.balance <= 0) return { net: 0, gross: 0, tax: 0 };
+    if (!isTaxable) {
+      const gross = Math.min(net, acc.balance);
+      acc.principal *= 1 - gross / acc.balance;
+      acc.balance -= gross;
+      return { net: gross, gross, tax: 0 };
+    }
+    const gainFrac = Math.max(0, (acc.balance - acc.cost) / acc.balance);
+    const keep = 1 - gainFrac * taxRate;
+    let gross = net / keep;
+    if (gross > acc.balance) gross = acc.balance;
+    const tax = gross * gainFrac * taxRate;
+    acc.cost *= 1 - gross / acc.balance;
+    acc.balance -= gross;
+    return { net: gross - tax, gross, tax };
+  }
+
+  function simulate(input) {
+    const h = input.household;
+    const a = input.assumptions;
+    const s = input.snapshot;
+    const r = a.returnRate;
+    const tax = a.taxRate;
+    const priceBase = a.priceBaseYear || s.year;
+    const startYear = s.year;
+    const endYear = h.headBirthYear + (input.endHeadAge || 80);
+    const children = h.children || [];
+
+    // 口座の状態
+    const cash = { v: s.cash };
+    const parent = { balance: s.parentNisa.balance, principal: s.parentNisa.principal };
+    const taxable = { balance: s.taxable.balance, cost: s.taxable.cost };
+    const kids = children.map((c, idx) => {
+      const k = (s.childNisa && s.childNisa[idx]) || { balance: 0, principal: 0 };
+      return { name: c.name, birthYear: c.birthYear, balance: k.balance || 0, principal: k.principal || 0 };
+    });
+    const idecos = (input.ideco || []).map((d, idx) => {
+      const k = (s.ideco && s.ideco[idx]) || { balance: 0, principal: 0 };
+      return Object.assign({}, d, { balance: k.balance || 0, principal: k.principal || 0, received: false });
+    });
+    const accounts = { taxable, parentNisa: parent };
+
+    const hs = input.housing || { enabled: false };
+    const loanAmount = hs.enabled ? Math.max(0, hs.price - hs.downPayment) : 0;
+    const loanMonthly = hs.enabled ? monthlyLoanPayment(loanAmount, hs.rate, hs.years) : 0;
+
+    const inv = input.invest;
+    const wd = input.withdraw || {};
+    const reserve = wd.reserve || 0;
+    const inc = input.income;
+
+    const rows = [];
+    const warnings = [];
+
+    for (let year = startYear; year <= endYear; year++) {
+      const headAge = year - h.headBirthYear;
+      const spouseAge = h.spouseBirthYear ? year - h.spouseBirthYear : null;
+      const ageOf = (who) => (who === 'spouse' ? spouseAge : headAge);
+      const infl = Math.pow(1 + a.inflation, year - priceBase);
+      const bought = hs.enabled && year >= hs.purchaseYear;
+
+      // 1. 収入(給与・退職金・年金・児童手当)
+      let salary = 0, bonus = 0;
+      if (inc.persons) {
+        inc.persons.forEach((p) => {
+          const age = ageOf(p.who);
+          if (age == null) return;
+          if (age <= p.lastWorkAge && p.points && p.points.length) salary += interpolate(p.points, age);
+          if (p.retirementBonus && age === p.lastWorkAge + 1) bonus += p.retirementBonus;
+        });
+      } else if (headAge <= inc.lastWorkAge) {
+        salary = interpolate(inc.points, headAge);
+      }
+      let pension = 0;
+      (inc.pensions || []).forEach((p) => {
+        const age = ageOf(p.who);
+        if (age != null && age >= p.startAge) pension += p.annual;
+      });
+      let childAllowance = 0;
+      if (!input.childAllowance || input.childAllowance.enabled !== false) {
+        children.forEach((c, idx) => { childAllowance += childAllowanceFor(children, idx, year); });
+      }
+      let eventIncome = 0;
+
+      // 2. 生活費
+      let living = 0;
+      const livingByItem = {};
+      (input.expenses || []).forEach((e) => {
+        if (e.role === 'rent' && bought) return;
+        if (!inRange(year, e.startYear, e.endYear)) return;
+        const base = e.points && e.points.length ? interpolate(e.points, headAge) : e.amount;
+        if (!base) return;
+        const annual = (e.unit === 'month' ? base * 12 : base) * (e.inflation === false ? 1 : infl);
+        living += annual;
+        livingByItem[e.name] = annual;
+      });
+      if (bought && hs.maintenance) living += hs.maintenance * infl;
+
+      // 3. 住宅費
+      let housingCost = 0;
+      if (hs.enabled) {
+        if (year === hs.purchaseYear) housingCost += hs.downPayment + (hs.costs || 0);
+        if (year > hs.purchaseYear && year <= hs.purchaseYear + hs.years) housingCost += loanMonthly * 12;
+      }
+
+      // 4. イベント(プラスは支出、マイナスは収入)
+      let eventCost = 0;
+      const eventNames = [];
+      (input.events || []).forEach((ev) => {
+        if (Number(ev.year) !== year) return;
+        if (ev.amount >= 0) eventCost += ev.amount; else eventIncome += -ev.amount;
+        eventNames.push(ev.name);
+      });
+
+      // 5. iDeCo(掛金は現金から、節税額は収入に加える。受取年に一括で現金へ)
+      let idecoIn = 0, taxSaving = 0, idecoReceive = 0;
+      const idecoContrib = idecos.map((d) => {
+        const age = ageOf(d.who);
+        if (age == null || d.received) return 0;
+        if (year < (d.startYear || startYear)) return 0;
+        if (age >= d.endAge || age >= d.receiveAge) return 0;
+        const c = (d.monthly || 0) * 12;
+        idecoIn += c;
+        taxSaving += c * (d.taxSavingRate || 0);
+        return c;
+      });
+
+      const income = salary + bonus + pension + childAllowance + eventIncome + taxSaving;
+      const expense = living + housingCost + eventCost;
+      const net = income - expense;
+      cash.v += net - idecoIn;
+
+      // 9. 計画的な取り崩し(期首残高から売却)
+      let plannedWithdraw = 0, withdrawTax = 0;
+      if (wd.startHeadAge != null && headAge >= wd.startHeadAge && wd.monthly > 0) {
+        let need = wd.monthly * 12 * (wd.inflate ? infl : 1);
+        for (const key of wd.order || ['taxable', 'parentNisa']) {
+          if (need <= 0) break;
+          const res = sell(accounts[key], need, tax, key === 'taxable');
+          need -= res.net; plannedWithdraw += res.net; withdrawTax += res.tax;
+        }
+        cash.v += plannedWithdraw;
+      }
+
+      // 7. 積立(毎年の積立額。入力のない年は0)
+      let planned = 0;
+      if (inv.byYear && inv.byYear[year] != null) planned = Number(inv.byYear[year]) || 0;
+      else {
+        const planEntry = (inv.plan || []).find((p) => inRange(year, p.fromYear, p.toYear));
+        planned = planEntry ? planEntry.annual : 0;
+      }
+      let investable = planned;
+      if (inv.reduceWhenShort !== false) investable = Math.min(planned, Math.max(0, cash.v - reserve));
+      let left = investable;
+
+      const pRoom = Math.max(0, Math.min(inv.parentNisa.annualCap, inv.parentNisa.lifetimeCap - parent.principal));
+      const pIn = Math.min(left, pRoom); left -= pIn;
+      parent.principal += pIn;
+
+      const kidIn = kids.map((k) => {
+        const age = year - k.birthYear;
+        const c = inv.childNisa;
+        if (!c || year < c.startYear || age < 0 || age >= c.untilAge) return 0;
+        const room = Math.max(0, Math.min(c.annualCap, c.lifetimeCap - k.principal));
+        const x = Math.min(left, room); left -= x; k.principal += x;
+        return x;
+      });
+
+      const tIn = left; left = 0;
+      taxable.cost += tIn;
+      const invested = pIn + tIn + kidIn.reduce((x, y) => x + y, 0);
+      cash.v -= invested;
+
+      // 8. 運用益(積立は年の途中に行う想定で半年分)
+      parent.balance = parent.balance * (1 + r) + pIn * (1 + r / 2);
+      taxable.balance = taxable.balance * (1 + r) + tIn * (1 + r / 2);
+      kids.forEach((k, idx) => { k.balance = k.balance * (1 + r) + kidIn[idx] * (1 + r / 2); });
+      idecos.forEach((d, idx) => {
+        d.balance = d.balance * (1 + r) + idecoContrib[idx] * (1 + r / 2);
+        d.principal += idecoContrib[idx];
+        const age = ageOf(d.who);
+        if (!d.received && age != null && age >= d.receiveAge && d.balance > 0) {
+          idecoReceive += d.balance;
+          d.balance = 0; d.principal = 0; d.received = true;
+        }
+      });
+      cash.v += idecoReceive;
+
+      // 10. 現金不足時の追加売却(子NISAは保持)
+      let emergency = 0;
+      if (wd.emergency !== false && cash.v < reserve) {
+        let need = reserve - cash.v;
+        for (const key of wd.order || ['taxable', 'parentNisa']) {
+          if (need <= 0) break;
+          const res = sell(accounts[key], need, tax, key === 'taxable');
+          need -= res.net; emergency += res.net; withdrawTax += res.tax;
+        }
+        cash.v += emergency;
+      }
+
+      // 11. 集計
+      const kidsTotal = kids.reduce((x, k) => x + k.balance, 0);
+      const idecoTotal = idecos.reduce((x, d) => x + d.balance, 0);
+      const total = cash.v + parent.balance + taxable.balance + kidsTotal + idecoTotal;
+      const unrealized = Math.max(0, taxable.balance - taxable.cost);
+      const totalAfterTax = total - unrealized * tax;
+
+      if (cash.v < 0 && !warnings.some((w) => w.type === 'cashShort')) {
+        warnings.push({ type: 'cashShort', year, headAge, message: `${year}年(${headAge}歳)に現金がマイナスになります` });
+      }
+      const reduced = planned - investable > 1;
+
+      rows.push({
+        year, headAge, spouseAge,
+        childAges: kids.map((k) => year - k.birthYear),
+        salary, bonus, pension, childAllowance, eventIncome, taxSaving, income,
+        living, livingByItem, housingCost, eventCost, eventNames, expense, net,
+        plannedInvest: planned, invested, reduced, parentIn: pIn, childIn: kidIn, taxableIn: tIn,
+        idecoIn, idecoReceive, ideco: idecoTotal,
+        plannedWithdraw, emergency, withdrawTax,
+        cash: cash.v,
+        parentNisa: parent.balance, parentPrincipal: parent.principal,
+        childNisa: kids.map((k) => k.balance), childPrincipal: kids.map((k) => k.principal),
+        childNisaTotal: kidsTotal,
+        taxable: taxable.balance, taxableCost: taxable.cost,
+        total, totalAfterTax,
+      });
+    }
+
+    const at = (age) => rows.find((x) => x.headAge === age) || null;
+    const depletedIdx = rows.findIndex((x, i) => i > 0 && x.cash < 0 && x.parentNisa + x.taxable < 1);
+    if (depletedIdx >= 0) {
+      const d = rows[depletedIdx];
+      warnings.push({ type: 'depleted', year: d.year, headAge: d.headAge, message: `${d.year}年(${d.headAge}歳)に取り崩せる資産が尽きます` });
+    }
+    const reducedYears = rows.filter((x) => x.reduced).map((x) => x.year);
+    const taxableGone = rows.find((x, i) => i > 0 && rows[i - 1].taxable > 1 && x.taxable < 1);
+
+    return {
+      rows,
+      loan: { amount: loanAmount, monthly: loanMonthly, annual: loanMonthly * 12 },
+      summary: {
+        now: rows[0],
+        at65: at(65),
+        end: rows[rows.length - 1],
+        peak: rows.reduce((m, x) => (x.total > m.total ? x : m), rows[0]),
+        parentNisaFilledYear: (rows.find((x) => x.parentPrincipal >= inv.parentNisa.lifetimeCap - 1) || {}).year || null,
+        reducedYears,
+        taxableGoneYear: taxableGone ? taxableGone.year : null,
+      },
+      warnings,
+    };
+  }
+
+  const api = { simulate, monthlyLoanPayment, interpolate, childAllowanceFor };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.LifePlanEngine = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+(function () {
+'use strict';
+var E = window.LifePlanEngine;
+var DEFAULT_INPUT = {
+ "household": {
+  "headBirthYear": 1991,
+  "spouseBirthYear": 1993,
+  "children": [
+   {
+    "name": "第1子",
+    "birthYear": 2024
+   }
+  ],
+  "headName": "本人",
+  "spouseName": "配偶者"
+ },
+ "snapshot": {
+  "year": 2026,
+  "cash": 8000000,
+  "parentNisa": {
+   "balance": 2000000,
+   "principal": 1800000
+  },
+  "childNisa": [
+   {
+    "balance": 0,
+    "principal": 0
+   }
+  ],
+  "taxable": {
+   "balance": 0,
+   "cost": 0
+  },
+  "ideco": [
+   {
+    "balance": 0,
+    "principal": 0
+   },
+   {
+    "balance": 0,
+    "principal": 0
+   }
+  ]
+ },
+ "endHeadAge": 90,
+ "assumptions": {
+  "returnRate": 0.03,
+  "inflation": 0.01,
+  "taxRate": 0.20315,
+  "priceBaseYear": 2026
+ },
+ "income": {
+  "persons": [
+   {
+    "who": "head",
+    "name": "本人",
+    "points": [
+     {
+      "age": 35,
+      "amount": 5000000
+     },
+     {
+      "age": 45,
+      "amount": 6000000
+     },
+     {
+      "age": 55,
+      "amount": 6500000
+     },
+     {
+      "age": 60,
+      "amount": 6000000
+     }
+    ],
+    "lastWorkAge": 60,
+    "retirementBonus": 15000000
+   },
+   {
+    "who": "spouse",
+    "name": "配偶者",
+    "points": [
+     {
+      "age": 33,
+      "amount": 2500000
+     },
+     {
+      "age": 45,
+      "amount": 3000000
+     },
+     {
+      "age": 60,
+      "amount": 3000000
+     }
+    ],
+    "lastWorkAge": 60,
+    "retirementBonus": 0
+   }
+  ],
+  "pensions": [
+   {
+    "who": "head",
+    "startAge": 65,
+    "annual": 1800000
+   },
+   {
+    "who": "spouse",
+    "startAge": 65,
+    "annual": 1000000
+   }
+  ]
+ },
+ "expenses": [
+  {
+   "name": "住居費(家賃等)",
+   "unit": "month",
+   "role": "rent",
+   "points": [
+    {
+     "age": 35,
+     "amount": 90000
+    },
+    {
+     "age": 40,
+     "amount": 90000
+    },
+    {
+     "age": 45,
+     "amount": 90000
+    },
+    {
+     "age": 50,
+     "amount": 90000
+    },
+    {
+     "age": 55,
+     "amount": 90000
+    },
+    {
+     "age": 60,
+     "amount": 90000
+    },
+    {
+     "age": 65,
+     "amount": 90000
+    },
+    {
+     "age": 70,
+     "amount": 90000
+    },
+    {
+     "age": 75,
+     "amount": 90000
+    }
+   ]
+  },
+  {
+   "name": "食費・日用品費",
+   "unit": "month",
+   "points": [
+    {
+     "age": 35,
+     "amount": 80000
+    },
+    {
+     "age": 40,
+     "amount": 85000
+    },
+    {
+     "age": 45,
+     "amount": 90000
+    },
+    {
+     "age": 50,
+     "amount": 90000
+    },
+    {
+     "age": 55,
+     "amount": 85000
+    },
+    {
+     "age": 60,
+     "amount": 80000
+    },
+    {
+     "age": 65,
+     "amount": 75000
+    },
+    {
+     "age": 70,
+     "amount": 75000
+    },
+    {
+     "age": 75,
+     "amount": 75000
+    }
+   ]
+  },
+  {
+   "name": "水道光熱費・通信費",
+   "unit": "month",
+   "points": [
+    {
+     "age": 35,
+     "amount": 25000
+    },
+    {
+     "age": 40,
+     "amount": 25000
+    },
+    {
+     "age": 45,
+     "amount": 25000
+    },
+    {
+     "age": 50,
+     "amount": 25000
+    },
+    {
+     "age": 55,
+     "amount": 25000
+    },
+    {
+     "age": 60,
+     "amount": 25000
+    },
+    {
+     "age": 65,
+     "amount": 25000
+    },
+    {
+     "age": 70,
+     "amount": 25000
+    },
+    {
+     "age": 75,
+     "amount": 25000
+    }
+   ]
+  },
+  {
+   "name": "教養・娯楽・交際費",
+   "unit": "month",
+   "points": [
+    {
+     "age": 35,
+     "amount": 40000
+    },
+    {
+     "age": 40,
+     "amount": 40000
+    },
+    {
+     "age": 45,
+     "amount": 40000
+    },
+    {
+     "age": 50,
+     "amount": 40000
+    },
+    {
+     "age": 55,
+     "amount": 40000
+    },
+    {
+     "age": 60,
+     "amount": 40000
+    },
+    {
+     "age": 65,
+     "amount": 40000
+    },
+    {
+     "age": 70,
+     "amount": 40000
+    },
+    {
+     "age": 75,
+     "amount": 40000
+    }
+   ]
+  },
+  {
+   "name": "車両関連費",
+   "unit": "month",
+   "points": [
+    {
+     "age": 35,
+     "amount": 25000
+    },
+    {
+     "age": 40,
+     "amount": 25000
+    },
+    {
+     "age": 45,
+     "amount": 25000
+    },
+    {
+     "age": 50,
+     "amount": 25000
+    },
+    {
+     "age": 55,
+     "amount": 25000
+    },
+    {
+     "age": 60,
+     "amount": 25000
+    },
+    {
+     "age": 65,
+     "amount": 25000
+    },
+    {
+     "age": 70,
+     "amount": 25000
+    },
+    {
+     "age": 75,
+     "amount": 25000
+    }
+   ]
+  },
+  {
+   "name": "保険料",
+   "unit": "month",
+   "points": [
+    {
+     "age": 35,
+     "amount": 20000
+    },
+    {
+     "age": 40,
+     "amount": 20000
+    },
+    {
+     "age": 45,
+     "amount": 20000
+    },
+    {
+     "age": 50,
+     "amount": 20000
+    },
+    {
+     "age": 55,
+     "amount": 20000
+    },
+    {
+     "age": 60,
+     "amount": 20000
+    },
+    {
+     "age": 65,
+     "amount": 20000
+    },
+    {
+     "age": 70,
+     "amount": 20000
+    },
+    {
+     "age": 75,
+     "amount": 20000
+    }
+   ]
+  },
+  {
+   "name": "子供・教育費",
+   "unit": "month",
+   "points": [
+    {
+     "age": 35,
+     "amount": 20000
+    },
+    {
+     "age": 40,
+     "amount": 30000
+    },
+    {
+     "age": 45,
+     "amount": 40000
+    },
+    {
+     "age": 50,
+     "amount": 60000
+    },
+    {
+     "age": 55,
+     "amount": 20000
+    },
+    {
+     "age": 60,
+     "amount": 0
+    },
+    {
+     "age": 65,
+     "amount": 0
+    },
+    {
+     "age": 70,
+     "amount": 0
+    },
+    {
+     "age": 75,
+     "amount": 0
+    }
+   ]
+  },
+  {
+   "name": "その他小遣い・雑費",
+   "unit": "month",
+   "points": [
+    {
+     "age": 35,
+     "amount": 40000
+    },
+    {
+     "age": 40,
+     "amount": 40000
+    },
+    {
+     "age": 45,
+     "amount": 40000
+    },
+    {
+     "age": 50,
+     "amount": 40000
+    },
+    {
+     "age": 55,
+     "amount": 40000
+    },
+    {
+     "age": 60,
+     "amount": 40000
+    },
+    {
+     "age": 65,
+     "amount": 40000
+    },
+    {
+     "age": 70,
+     "amount": 40000
+    },
+    {
+     "age": 75,
+     "amount": 40000
+    }
+   ]
+  },
+  {
+   "name": "年間特別支出",
+   "unit": "year",
+   "points": [
+    {
+     "age": 35,
+     "amount": 400000
+    },
+    {
+     "age": 40,
+     "amount": 400000
+    },
+    {
+     "age": 45,
+     "amount": 400000
+    },
+    {
+     "age": 50,
+     "amount": 400000
+    },
+    {
+     "age": 55,
+     "amount": 400000
+    },
+    {
+     "age": 60,
+     "amount": 400000
+    },
+    {
+     "age": 65,
+     "amount": 400000
+    },
+    {
+     "age": 70,
+     "amount": 400000
+    },
+    {
+     "age": 75,
+     "amount": 400000
+    }
+   ]
+  }
+ ],
+ "housing": {
+  "enabled": true,
+  "purchaseYear": 2029,
+  "price": 40000000,
+  "downPayment": 3000000,
+  "costs": 2000000,
+  "rate": 0.012,
+  "years": 35,
+  "maintenance": 300000
+ },
+ "events": [
+  {
+   "year": 2030,
+   "name": "第1子 入園準備",
+   "amount": 300000
+  },
+  {
+   "year": 2033,
+   "name": "車の買い替え",
+   "amount": 3000000
+  },
+  {
+   "year": 2042,
+   "name": "第1子 大学入学",
+   "amount": 2000000
+  },
+  {
+   "year": 2045,
+   "name": "リフォーム",
+   "amount": 1500000
+  }
+ ],
+ "invest": {
+  "byYear": {
+   "2026": 1200000,
+   "2027": 1200000,
+   "2028": 1200000,
+   "2029": 1200000,
+   "2030": 1200000,
+   "2031": 1200000,
+   "2032": 1200000,
+   "2033": 1200000,
+   "2034": 1200000,
+   "2035": 1200000,
+   "2036": 1200000,
+   "2037": 1200000,
+   "2038": 1200000,
+   "2039": 1200000,
+   "2040": 1200000,
+   "2041": 600000,
+   "2042": 600000,
+   "2043": 600000,
+   "2044": 600000,
+   "2045": 600000,
+   "2046": 600000,
+   "2047": 600000,
+   "2048": 600000,
+   "2049": 600000,
+   "2050": 600000
+  },
+  "parentNisa": {
+   "annualCap": 7200000,
+   "lifetimeCap": 36000000
+  },
+  "childNisa": {
+   "annualCap": 600000,
+   "lifetimeCap": 6000000,
+   "startYear": 2027,
+   "untilAge": 18
+  },
+  "reduceWhenShort": true
+ },
+ "withdraw": {
+  "startHeadAge": 65,
+  "monthly": 100000,
+  "inflate": false,
+  "order": [
+   "taxable",
+   "parentNisa"
+  ],
+  "emergency": true,
+  "reserve": 2000000
+ },
+ "childAllowance": {
+  "enabled": true
+ },
+ "ideco": [
+  {
+   "who": "head",
+   "monthly": 0,
+   "endAge": 65,
+   "receiveAge": 65,
+   "taxSavingRate": 0.2
+  },
+  {
+   "who": "spouse",
+   "monthly": 0,
+   "endAge": 65,
+   "receiveAge": 65,
+   "taxSavingRate": 0.15
+  }
+ ],
+ "isSample": true,
+ "livingAges": [
+  35,
+  40,
+  45,
+  50,
+  55,
+  60,
+  65,
+  70,
+  75
+ ]
+};
+var STORE_KEY = 'lifeplan-simulator.v1';
+var DRIVE_FILE = 'lifeplan.json';
+
+// ---------- 状態 ----------
+var D = null;            // { input, scenarios, settings, savedAt }
+var R = null;            // 計算結果
+var baseline = null;     // 開いた時点の結果(変更前との差の表示用)
+var ui = { view: 'home', tab: 'basic', livingSel: 0, tableHidden: { living: true, detail: true }, investShowAll: false, confirm: null, bulk: null };
+var drive = { token: null, exp: 0, fileId: null, status: '', statusType: '', lastSync: null };
+
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+function load() {
+  try { var s = localStorage.getItem(STORE_KEY); if (s) return JSON.parse(s); } catch (e) {}
+  return null;
+}
+function persistLocal() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(D)); } catch (e) {}
+}
+function fresh() {
+  return { input: clone(DEFAULT_INPUT), scenarios: [], settings: { clientId: '', driveAuto: true }, savedAt: new Date().toISOString() };
+}
+
+// 入力の整合をとる(子供・iDeCoの残高配列、生活費の年齢列)
+function normalize(inp) {
+  inp.household.children = inp.household.children || [];
+  inp.snapshot.childNisa = inp.snapshot.childNisa || [];
+  while (inp.snapshot.childNisa.length < inp.household.children.length) inp.snapshot.childNisa.push({ balance: 0, principal: 0 });
+  inp.snapshot.childNisa.length = inp.household.children.length;
+  inp.ideco = inp.ideco || [];
+  inp.snapshot.ideco = inp.snapshot.ideco || [];
+  while (inp.snapshot.ideco.length < inp.ideco.length) inp.snapshot.ideco.push({ balance: 0, principal: 0 });
+  inp.snapshot.ideco.length = inp.ideco.length;
+  inp.events = inp.events || [];
+  inp.invest.byYear = inp.invest.byYear || {};
+  inp.income.persons = inp.income.persons || [];
+  inp.income.pensions = inp.income.pensions || [];
+  if (!inp.livingAges) {
+    var first = (inp.expenses[0] && inp.expenses[0].points) || [];
+    inp.livingAges = first.length ? first.map(function (p) { return p.age; }) : [36, 41, 46, 51, 56, 61, 66, 71, 76];
+  }
+  inp.expenses.forEach(function (e) {
+    var map = {};
+    (e.points || []).forEach(function (p) { map[p.age != null ? p.age : p.headAge] = p.amount; });
+    var lastVal = e.amount || 0;
+    e.points = inp.livingAges.map(function (age) {
+      if (map[age] != null) lastVal = map[age];
+      return { age: age, amount: map[age] != null ? map[age] : lastVal };
+    });
+    delete e.amount;
+  });
+  return inp;
+}
+
+function recompute() {
+  try { R = E.simulate(D.input); R.error = null; }
+  catch (e) { R = R || { rows: [], summary: {}, warnings: [], loan: {} }; R.error = '計算できませんでした:' + e.message; }
+}
+
+// ---------- 書式 ----------
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function n0(v) { return Math.round(v).toLocaleString('ja-JP'); }
+function man(v) { return Math.round(v / 1e4); }
+function manTxt(v) { var m = man(v); return (m < 0 ? '−' : '') + Math.abs(m).toLocaleString('ja-JP'); }
+function bigYen(v) { // 1億1,438万円
+  var m = man(v), neg = m < 0; m = Math.abs(m);
+  var s;
+  if (m >= 10000) { var oku = Math.floor(m / 10000), r = m % 10000; s = oku + '億' + (r ? r.toLocaleString('ja-JP') + '万円' : '円'); }
+  else s = m.toLocaleString('ja-JP') + '万円';
+  return (neg ? '−' : '') + s;
+}
+function bigYenHtml(v) {
+  var t = bigYen(v); var m = t.match(/^(.*?)(万円|円)$/);
+  return m ? esc(m[1]) + '<small> ' + m[2] + '</small>' : esc(t);
+}
+function cell(v) { var m = man(v); return m === 0 ? '—' : manTxt(v); }
+function round1(v) { return Math.round(v * 10) / 10; }
+function nowYear() { return new Date().getFullYear(); }
+
+// ---------- パス操作 ----------
+function getPath(o, path) { return path.split('.').reduce(function (a, k) { return a == null ? a : a[k]; }, o); }
+function setPath(o, path, val) {
+  var ks = path.split('.'); var last = ks.pop();
+  var t = ks.reduce(function (a, k) { if (a[k] == null) a[k] = {}; return a[k]; }, o);
+  if (val === undefined) delete t[last]; else t[last] = val;
+}
+function pid(path) { return 'f-' + path.replace(/[^A-Za-z0-9]/g, '-'); }
+
+// 数値入力欄。scale=1万 なら万円で表示して円で保存
+function numField(label, path, unit, scale, opts) {
+  opts = opts || {};
+  var v = getPath(D.input, path);
+  var shown = v == null || v === '' ? '' : round1(v / (scale || 1) * (opts.pct ? 100 : 1));
+  if (opts.pct) shown = Math.round(v * 10000) / 100;
+  return '<label class="field' + (opts.cls ? ' ' + opts.cls : '') + '"><span class="lbl">' + esc(label) + '</span><span class="inp' + (opts.sm ? ' sm' : '') + '"><input class="n" id="' + pid(path) + '" data-path="' + esc(path) + '" data-scale="' + (scale || 1) + '"' + (opts.pct ? ' data-pct="1"' : '') + (opts.int ? ' data-int="1"' : '') + ' inputmode="decimal" value="' + esc(shown) + '"><span class="unit">' + esc(unit) + '</span></span></label>';
+}
+function bareNum(path, unit, scale, label, extra) {
+  var v = getPath(D.input, path);
+  var shown = v == null || v === '' ? '' : round1(v / (scale || 1));
+  return '<span class="inp sm' + (extra ? ' ' + extra : '') + '"><input class="n" id="' + pid(path) + '" aria-label="' + esc(label) + '" data-path="' + esc(path) + '" data-scale="' + (scale || 1) + '" inputmode="decimal" value="' + esc(shown) + '"><span class="unit">' + esc(unit) + '</span></span>';
+}
+function textField(label, path, opts) {
+  opts = opts || {};
+  var v = getPath(D.input, path);
+  var input = '<input id="' + pid(path) + '" data-path="' + esc(path) + '" data-text="1" value="' + esc(v) + '"' + (opts.label ? ' aria-label="' + esc(opts.label) + '"' : '') + '>';
+  if (opts.bare) return '<span class="inp sm grow">' + input + '</span>';
+  return '<label class="field"><span class="lbl">' + esc(label) + '</span><span class="inp">' + input + '</span></label>';
+}
+function checkField(label, path, invert) {
+  var v = getPath(D.input, path);
+  var on = invert ? v === true : v !== false;
+  return '<label class="check"><span>' + esc(label) + '</span><input type="checkbox" id="' + pid(path) + '" data-path="' + esc(path) + '" data-bool="1"' + (on ? ' checked' : '') + '></label>';
+}
+function whoSelect(path, label) {
+  var v = getPath(D.input, path);
+  return '<span class="inp sm"><select id="' + pid(path) + '" aria-label="' + esc(label) + '" data-path="' + esc(path) + '" data-text="1"><option value="head"' + (v === 'head' ? ' selected' : '') + '>' + esc(personName('head')) + '</option><option value="spouse"' + (v === 'spouse' ? ' selected' : '') + '>' + esc(personName('spouse')) + '</option></select></span>';
+}
+function personName(who) {
+  var h = D.input.household;
+  return who === 'spouse' ? (h.spouseName || '配偶者') : (h.headName || '本人');
+}
+
+// ---------- 画面:共通 ----------
+var VIEWS = ['home', 'input', 'table', 'compare', 'sync'];
+function route() {
+  var h = (location.hash || '').replace('#', '');
+  if (h === 'display') { showDisplay(); return; }
+  hideDisplay();
+  ui.view = VIEWS.indexOf(h) >= 0 ? h : 'home';
+  render();
+}
+function setNav() {
+  document.querySelectorAll('[data-nav]').forEach(function (a) {
+    if (a.getAttribute('data-nav') === ui.view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+}
+function render() {
+  setNav();
+  var v = document.getElementById('view');
+  var html = '';
+  if (R.error) html += '<div class="alert"><b>注意</b><span>' + esc(R.error) + '</span></div>';
+  if (ui.view === 'home') html += viewHome();
+  else if (ui.view === 'input') html += viewInput();
+  else if (ui.view === 'table') html += viewTable();
+  else if (ui.view === 'compare') html += viewCompare();
+  else html += viewSync();
+  v.innerHTML = html;
+  updateCalcs();
+}
+function toast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toast._t); toast._t = setTimeout(function () { t.hidden = true; }, 2600);
+}
+
+// ---------- グラフ ----------
+function niceMax(v) {
+  var steps = [1e7, 2e7, 5e7, 1e8, 2e8, 5e8];
+  var top = Math.max(v, 1e7);
+  for (var i = 0; i < steps.length; i++) { var st = steps[i]; if (top / st <= 5) return { max: Math.ceil(top / st) * st, step: st }; }
+  return { max: Math.ceil(top / 1e9) * 1e9, step: 1e9 };
+}
+function tickLabel(v) { if (v === 0) return '0'; return v >= 1e8 ? (v / 1e8) + '億' : (v / 1e4).toLocaleString('ja-JP') + '万'; }
+var SERIES = [
+  { key: 'parentNisa', name: '親NISA', color: 'var(--c-parent)' },
+  { key: 'ideco', name: 'iDeCo', color: 'var(--c-ideco)' },
+  { key: 'childNisaTotal', name: '子NISA', color: 'var(--c-kid)' },
+  { key: 'taxable', name: '特定口座', color: 'var(--c-tax)' },
+  { key: 'cash', name: '現金', color: 'var(--c-cash)' }
+];
+function stackChart(rows, opts) {
+  opts = opts || {};
+  var fs = opts.fs || 12, W = 1000, H = opts.h || 300, L = opts.L || 64, B = fs * 2 + 16, T = 10, Rr = 8;
+  var ih = H - B - T, iw = W - L - Rr;
+  var maxV = Math.max.apply(null, rows.map(function (r) { return SERIES.reduce(function (s, x) { return s + Math.max(0, r[x.key]); }, 0); }));
+  var nm = niceMax(maxV); var sc = function (v) { return v / nm.max * ih; };
+  var bw = iw / rows.length, gap = Math.min(3, bw * 0.25);
+  var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(opts.label || '口座別の資産推移') + '">';
+  for (var t = 0; t <= nm.max + 1; t += nm.step) {
+    var y = T + ih - sc(t);
+    out += '<line class="grid" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + y + '" y2="' + y + '"></line><text class="tick" x="' + (L - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + tickLabel(t) + '</text>';
+  }
+  rows.forEach(function (r, i) {
+    var x = L + i * bw + gap / 2, w = bw - gap, y = T + ih;
+    var g = '<g class="bar"><title>' + r.year + '年(' + r.headAge + '歳) 総資産 ' + bigYen(r.total) + '\n' + SERIES.map(function (s) { return s.name + ' ' + manTxt(r[s.key]) + '万円'; }).join(' / ') + '</title>';
+    g += '<rect class="hit" x="' + (L + i * bw) + '" y="' + T + '" width="' + bw + '" height="' + ih + '"></rect>';
+    SERIES.forEach(function (s, k) {
+      var hgt = sc(Math.max(0, r[s.key]));
+      if (hgt <= 0) return;
+      y -= hgt;
+      var col = opts.colors ? opts.colors[s.key] : s.color;
+      g += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + w.toFixed(1) + '" height="' + hgt.toFixed(1) + '" style="fill:' + col + '"></rect>';
+    });
+    g += '</g>';
+    out += g;
+    var every = rows.length > 30 ? 10 : 5;
+    if ((r.year - rows[0].year) % every === 0) {
+      var cx = L + i * bw + bw / 2;
+      out += '<text class="tick" x="' + cx + '" y="' + (H - B + fs + 4) + '" text-anchor="middle">' + r.year + '</text><text class="tick" x="' + cx + '" y="' + (H - B + fs * 2 + 8) + '" text-anchor="middle">' + r.headAge + '歳</text>';
+    }
+  });
+  out += '<line class="axis" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + (T + ih) + '" y2="' + (T + ih) + '"></line></svg>';
+  return out;
+}
+function legendHtml() {
+  return '<div class="legend">' + SERIES.map(function (s) { return '<span><i style="background:' + s.color + '"></i>' + s.name + '</span>'; }).join('') + '</div>';
+}
+
+// ---------- ホーム ----------
+function milestones() {
+  var inp = D.input, rows = R.rows, list = [];
+  if (!rows.length) return list;
+  var byYear = function (y) { return rows.find(function (r) { return r.year === y; }); };
+  var add = function (name, y) { var r = byYear(y); if (r && !list.some(function (m) { return m.row.year === y && m.name === name; })) list.push({ name: name, row: r }); };
+  add('現在', rows[0].year);
+  if (inp.housing && inp.housing.enabled) add('住宅購入', inp.housing.purchaseYear);
+  if (R.summary.parentNisaFilledYear) add('親NISA枠が埋まる', R.summary.parentNisaFilledYear);
+  inp.household.children.forEach(function (c) { add((c.name || '子供') + ' 18歳', c.birthYear + 18); });
+  var head = inp.income.persons.find(function (p) { return p.who === 'head'; });
+  if (head) add('退職', inp.household.headBirthYear + head.lastWorkAge);
+  add('65歳', inp.household.headBirthYear + 65);
+  add((inp.endHeadAge || 80) + '歳', rows[rows.length - 1].year);
+  list.sort(function (a, b) { return a.row.year - b.row.year; });
+  return list;
+}
+function insightText() {
+  var s = R.summary, inp = D.input, parts = [];
+  if (s.peak) parts.push('資産は' + s.peak.year + '年(' + s.peak.headAge + '歳)の約' + bigYen(s.peak.total) + 'が最大です。');
+  var wd = inp.withdraw || {};
+  if (wd.startHeadAge != null && wd.monthly > 0) parts.push(wd.startHeadAge + '歳から月' + n0(wd.monthly / 1e4) + '万円を取り崩します。');
+  if (s.taxableGoneYear) { var g = R.rows.find(function (r) { return r.year === s.taxableGoneYear; }); parts.push('特定口座は' + g.year + '年(' + g.headAge + '歳)で使い切り、その後は親NISAから取り崩します。'); }
+  if (s.reducedYears && s.reducedYears.length) {
+    var ys = s.reducedYears; var txt = ys.length > 3 ? ys[0] + '〜' + ys[ys.length - 1] + '年のうち' + ys.length + '年' : ys.join('・') + '年';
+    parts.push(txt + 'は現金が足りないため、積立を自動で減らしています。');
+  }
+  return parts.join('');
+}
+function upcoming() {
+  var inp = D.input, start = inp.snapshot.year, list = [];
+  inp.events.forEach(function (e) { if (Number(e.year) >= start) list.push({ year: Number(e.year), name: e.name, amount: e.amount }); });
+  if (inp.housing && inp.housing.enabled && inp.housing.purchaseYear >= start) list.push({ year: inp.housing.purchaseYear, name: '住宅購入(頭金・諸経費)', amount: inp.housing.downPayment + (inp.housing.costs || 0) });
+  list.sort(function (a, b) { return a.year - b.year; });
+  return list.slice(0, 6);
+}
+function viewHome() {
+  var s = R.summary, rows = R.rows;
+  if (!rows.length) return '<div class="card"><p>計算結果がありません。前提条件を確認してください。</p></div>';
+  var now = rows[0], end = s.end, at65 = s.at65;
+  var inp = D.input, pn = inp.invest.parentNisa;
+  var used = now.parentPrincipal, pct = Math.min(100, Math.round(used / pn.lifetimeCap * 100));
+  var html = '<div class="head"><div><h1>資産の見通し</h1><p class="sub">起点:' + inp.snapshot.year + '年の実績残高 ・ 最終保存 ' + esc(fmtTime(D.savedAt)) + '</p></div>' +
+    '<div class="btns"><a class="btn" href="#compare">シナリオを保存</a><button type="button" class="btn primary" data-act="goSnapshot">実績残高を入力して更新</button></div></div>';
+  html += '<div class="grid-kpi">' +
+    kpi('現在の総資産(' + now.headAge + '歳)', bigYenHtml(now.total), '現金 ' + manTxt(now.cash) + '万円 ・ 運用 ' + manTxt(now.total - now.cash) + '万円') +
+    (at65 ? kpi('65歳時点の総資産(' + at65.year + '年)', bigYenHtml(at65.total), '税引後 ' + bigYen(at65.totalAfterTax)) : '') +
+    kpi(end.headAge + '歳時点の総資産(' + end.year + '年)', bigYenHtml(end.total), 'うち子NISA ' + manTxt(end.childNisaTotal) + '万円') +
+    '<div class="kpi"><span class="kpi-lbl">親NISA枠の使用(元本)</span><span class="kpi-val">' + manTxt(used) + '<small> / ' + manTxt(pn.lifetimeCap) + '万円</small></span><div class="meter" role="img" aria-label="' + pct + '%"><div style="width:' + pct + '%"></div></div><span class="kpi-note">' + (s.parentNisaFilledYear ? s.parentNisaFilledYear + '年に枠が埋まる見込み' : '計算期間内には埋まりません') + '</span></div>' +
+    '</div>';
+  if (inp.isSample) html += '<div class="alert"><b>見本</b><span>表示しているのは架空の見本データです。「前提条件」の各タブと「実績残高」を、ご自身の値に書き換えてください。</span></div>';
+  if (R.warnings.length) html += R.warnings.map(function (w) { return '<div class="alert"><b>注意</b><span>' + esc(w.message) + '。積立額や取り崩し額、生活防衛資金を見直してください。</span></div>'; }).join('');
+  html += '<section class="card chart"><div class="head"><h2>口座別の資産推移</h2>' + legendHtml() + '</div>' + stackChart(rows) + '<p class="insight">' + esc(insightText()) + '</p></section>';
+  var ms = milestones();
+  html += '<div class="row"><section class="card wide"><h2>節目ごとの資産</h2><div class="tbl-wrap"><table class="data"><thead><tr><th class="l" scope="col">節目</th><th scope="col">現金</th><th scope="col">親NISA</th><th scope="col">子NISA</th><th scope="col">特定口座</th><th scope="col">iDeCo</th><th scope="col">総資産(万円)</th></tr></thead><tbody>' +
+    ms.map(function (m) { var r = m.row; return '<tr><th class="l" scope="row">' + esc(m.name) + '<div class="sub" style="margin:0">' + r.year + '年 ・ ' + r.headAge + '歳</div></th><td>' + cell(r.cash) + '</td><td>' + cell(r.parentNisa) + '</td><td>' + cell(r.childNisaTotal) + '</td><td>' + cell(r.taxable) + '</td><td>' + cell(r.ideco) + '</td><td class="tot">' + manTxt(r.total) + '</td></tr>'; }).join('') +
+    '</tbody></table></div></section>';
+  var up = upcoming();
+  html += '<div class="narrow" style="display:flex;flex-direction:column;gap:20px"><section class="card"><h2>これからの大きな支出・収入</h2>' +
+    (up.length ? '<div class="list">' + up.map(function (e) { return '<div class="it"><span class="grow"><span class="sub" style="margin:0">' + e.year + '年</span> ' + esc(e.name) + '</span><b class="num">' + (e.amount < 0 ? '+' : '') + manTxt(Math.abs(e.amount)) + '万円</b></div>'; }).join('') + '</div>' : '<p class="hint">登録されたライフイベントはありません。</p>') +
+    '</section><section class="card"><h2>この計算の前提</h2><div class="chips">' + assumptionChips() + '</div><a href="#input">前提条件を変更する</a></section></div></div>';
+  return html;
+}
+function kpi(lbl, valHtml, note) {
+  return '<div class="kpi"><span class="kpi-lbl">' + esc(lbl) + '</span><span class="kpi-val">' + valHtml + '</span><span class="kpi-note">' + esc(note) + '</span></div>';
+}
+function assumptionChips() {
+  var inp = D.input, c = [];
+  c.push('利回り 年' + round1(inp.assumptions.returnRate * 100) + '%');
+  c.push('インフレ 年' + round1(inp.assumptions.inflation * 100) + '%');
+  if (inp.housing && inp.housing.enabled) c.push('住宅ローン 月' + round1(R.loan.monthly / 1e4) + '万円');
+  c.push('生活防衛資金 ' + n0((inp.withdraw.reserve || 0) / 1e4) + '万円');
+  if (inp.withdraw.startHeadAge != null && inp.withdraw.monthly > 0) c.push(inp.withdraw.startHeadAge + '歳から月' + n0(inp.withdraw.monthly / 1e4) + '万円取り崩し');
+  if (inp.childAllowance && inp.childAllowance.enabled !== false && inp.household.children.length) c.push('児童手当あり');
+  var ide = inp.ideco.filter(function (d) { return d.monthly > 0; });
+  if (ide.length) c.push('iDeCo ' + ide.map(function (d) { return personName(d.who) + ' 月' + round1(d.monthly / 1e4) + '万円'; }).join('・'));
+  return c.map(function (t) { return '<span class="chip">' + esc(t) + '</span>'; }).join('');
+}
+function fmtTime(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso); if (isNaN(d)) return '—';
+  return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+// ---------- 前提条件 ----------
+var TABS = [['basic', '基本'], ['income', '収入'], ['living', '生活費'], ['housing', '住宅'], ['invest', '積立・取り崩し'], ['ideco', 'iDeCo'], ['children', '子供'], ['events', 'ライフイベント'], ['snapshot', '実績残高']];
+function liveBar() {
+  var s = R.summary;
+  var a65 = s.at65 ? s.at65.total : null, end = s.end ? s.end.total : null;
+  var d65 = baseline && baseline.at65 && a65 != null ? a65 - baseline.at65 : null;
+  return '<div class="live" id="live"><span class="l">65歳時点の総資産</span><span class="v" data-calc="at65">' + (a65 != null ? esc(bigYen(a65)) : '—') + '</span>' +
+    '<span class="l">' + (D.input.endHeadAge || 80) + '歳時点</span><span class="v" data-calc="end">' + (end != null ? esc(bigYen(end)) : '—') + '</span>' +
+    '<span class="d" data-calc="delta">' + deltaTxt(d65) + '</span></div>';
+}
+function deltaTxt(d) { if (d == null || Math.abs(d) < 5000) return ''; return '開いた時より ' + (d > 0 ? '+' : '−') + n0(Math.abs(d) / 1e4) + '万円'; }
+function viewInput() {
+  var html = '<div class="head"><div><h1>前提条件</h1><p class="sub">変更するとすぐに再計算され、自動で保存されます。金額の単位は万円です。</p></div></div>';
+  html += liveBar();
+  html += '<div class="tabs" role="tablist" aria-label="入力の種類">' + TABS.map(function (t) { return '<button type="button" role="tab" aria-selected="' + (ui.tab === t[0]) + '" data-act="tab" data-arg="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>';
+  var f = { basic: tabBasic, income: tabIncome, living: tabLiving, housing: tabHousing, invest: tabInvest, ideco: tabIdeco, children: tabChildren, events: tabEvents, snapshot: tabSnapshot }[ui.tab];
+  html += f();
+  return html;
+}
+function tabBasic() {
+  return '<section class="card"><h2>世帯</h2><div class="fields">' +
+    textField('本人の呼び名', 'household.headName') + numField('本人の生まれ年', 'household.headBirthYear', '年', 1, { int: 1 }) +
+    textField('配偶者の呼び名', 'household.spouseName') + numField('配偶者の生まれ年', 'household.spouseBirthYear', '年', 1, { int: 1 }) +
+    numField('計算する最後の年齢(本人)', 'endHeadAge', '歳', 1, { int: 1 }) +
+    '</div></section>' +
+    '<section class="card"><h2>運用と物価</h2><div class="fields">' +
+    numField('想定利回り', 'assumptions.returnRate', '%/年', 1, { pct: 1 }) + numField('インフレ率', 'assumptions.inflation', '%/年', 1, { pct: 1 }) +
+    numField('売却益への税率', 'assumptions.taxRate', '%', 1, { pct: 1 }) + numField('生活費を入力した物価の年', 'assumptions.priceBaseYear', '年', 1, { int: 1 }) +
+    '</div><p class="hint">生活費は「物価の年」の金額で入力し、インフレ率で毎年上昇させます。</p></section>' +
+    '<section class="card"><h2>親NISA(夫婦合計)</h2><div class="fields">' +
+    numField('年間の上限', 'invest.parentNisa.annualCap', '万円', 1e4) + numField('生涯の非課税枠', 'invest.parentNisa.lifetimeCap', '万円', 1e4) +
+    '</div></section>';
+}
+function tabIncome() {
+  var inc = D.input.income, html = '';
+  inc.persons.forEach(function (p, i) {
+    var base = 'income.persons.' + i;
+    html += '<section class="card"><div class="head"><h2>' + esc(personName(p.who)) + 'の手取り(年額)</h2><span class="sub">5年ごとなど好きな年齢で入力</span></div><div class="list">' +
+      p.points.map(function (pt, k) {
+        return '<div class="it"><span class="who"><span class="inp sm" style="width:84px"><input class="n" id="' + pid(base + '.points.' + k + '.age') + '" aria-label="年齢" data-path="' + base + '.points.' + k + '.age" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(pt.age) + '"><span class="unit">歳</span></span></span>' +
+          bareNum(base + '.points.' + k + '.amount', '万円', 1e4, pt.age + '歳の手取り', 'grow') +
+          '<button type="button" class="btn icon" aria-label="この年齢を削除" data-act="delPoint" data-arg="' + i + ',' + k + '">×</button></div>';
+      }).join('') + '</div>' +
+      '<div class="btns"><button type="button" class="btn ghost small" data-act="addPoint" data-arg="' + i + '">+ 年齢を追加</button></div>' +
+      '<div class="fields">' + numField('給与を受け取る最後の年齢', base + '.lastWorkAge', '歳', 1, { int: 1 }) + numField('退職金(手取り・翌年に受取)', base + '.retirementBonus', '万円', 1e4) + '</div>' +
+      '<p class="hint">入力した年齢の間は直線で予測します。収入がない場合は年齢を削除してください。共働きでなければ世帯の合計を本人に入れても構いません。</p></section>';
+  });
+  html += '<section class="card"><h2>年金(年額)</h2><div class="list">' +
+    inc.pensions.map(function (p, k) {
+      var b = 'income.pensions.' + k;
+      return '<div class="it">' + whoSelect(b + '.who', '受け取る人') + '<span class="inp sm" style="width:92px"><input class="n" id="' + pid(b + '.startAge') + '" aria-label="受取開始年齢" data-path="' + b + '.startAge" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(p.startAge) + '"><span class="unit">歳から</span></span>' +
+        bareNum(b + '.annual', '万円/年', 1e4, '年金の年額', 'grow') + '<button type="button" class="btn icon" aria-label="この年金を削除" data-act="delPension" data-arg="' + k + '">×</button></div>';
+    }).join('') + '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addPension">+ 年金を追加</button></div></section>';
+  html += '<section class="card"><h2>児童手当</h2>' + checkField('児童手当を収入に含める', 'childAllowance.enabled') +
+    '<p class="hint">2024年10月以降の制度で計算します:高校生年代まで、所得制限なし。3歳未満は月1.5万円、3歳以上は月1万円、第3子以降は月3万円。今年の合計は <b data-calc="caNow"></b> です。子供は「子供」タブで登録します。</p></section>';
+  return html;
+}
+function tabLiving() {
+  var inp = D.input, ages = inp.livingAges, items = inp.expenses;
+  var monthlyAt = function (i) { return items.reduce(function (s, e) { var v = e.points[i] ? e.points[i].amount : 0; return s + (e.unit === 'year' ? v / 12 : v); }, 0); };
+  var totals = ages.map(function (a, i) { return monthlyAt(i); });
+  var max = Math.max.apply(null, totals.concat([1]));
+  var html = '<section class="card living-pc"><div class="head"><h2>生活費(月額 ・ 万円 ・ ' + esc(inp.assumptions.priceBaseYear || inp.snapshot.year) + '年の物価)</h2><span class="sub">年齢は' + esc(personName('head')) + ' ・ 間は直線で予測し、インフレを上乗せ</span></div>';
+  html += '<div class="matrix"><table><thead><tr><th scope="col" style="text-align:left">費目</th>' + ages.map(function (a) { return '<th scope="col">' + a + '歳<span>' + (inp.household.headBirthYear + a) + '年</span></th>'; }).join('') + '<th></th></tr></thead><tbody>';
+  items.forEach(function (e, k) {
+    var b = 'expenses.' + k;
+    html += '<tr><th scope="row"><span class="inp sm"><input id="' + pid(b + '.name') + '" aria-label="費目名" data-path="' + b + '.name" data-text="1" value="' + esc(e.name) + '"></span><div class="meta">' +
+      '<label><input type="checkbox" data-act="unitYear" data-arg="' + k + '"' + (e.unit === 'year' ? ' checked' : '') + '> 年額で入力</label>' +
+      '<label><input type="checkbox" data-act="rent" data-arg="' + k + '"' + (e.role === 'rent' ? ' checked' : '') + '> 住宅購入で終了</label></div></th>';
+    e.points.forEach(function (p, i) {
+      var chg = i > 0 && p.amount !== e.points[i - 1].amount;
+      html += '<td><input class="cell n' + (chg ? ' chg' : '') + '" id="' + pid(b + '.points.' + i + '.amount') + '" aria-label="' + esc(e.name) + ' ' + ages[i] + '歳" data-path="' + b + '.points.' + i + '.amount" data-scale="1e4" inputmode="decimal" value="' + round1(p.amount / 1e4) + '"></td>';
+    });
+    html += '<td><button type="button" class="btn icon" aria-label="' + esc(e.name) + 'を削除" data-act="delItem" data-arg="' + k + '">×</button></td></tr>';
+  });
+  html += '</tbody><tfoot><tr><th scope="row">合計(月額)</th>' + totals.map(function (t) { return '<td class="num">' + round1(t / 1e4) + '</td>'; }).join('') + '<td></td></tr>' +
+    '<tr><th scope="row" style="font-weight:400;border:0;color:var(--muted);font-size:12px">推移</th>' + totals.map(function (t) { return '<td style="border:0;vertical-align:bottom;height:48px;padding:4px 18px 0"><div style="height:' + Math.round(t / max * 44) + 'px;background:var(--c-kid);border-radius:3px 3px 0 0"></div></td>'; }).join('') + '<td style="border:0"></td></tr></tfoot></table></div>';
+  html += '<div class="btns"><button type="button" class="btn ghost small" data-act="addItem">+ 費目を追加</button><button type="button" class="btn small" data-act="addAgeCol">+ 年齢の列を追加</button><button type="button" class="btn small" data-act="delAgeCol">最後の年齢の列を削除</button></div>';
+  html += '<p class="hint">「年額で入力」にした費目は年額(万円)で入力します。家賃など「住宅購入で終了」にした費目は、住宅購入の年から0になります。</p></section>';
+
+  // スマホ:年齢を選んで入力
+  var sel = Math.min(ui.livingSel, ages.length - 1);
+  html += '<section class="card living-phone"><div class="head"><h2>入力する年齢</h2><span class="sub">年齢を選ぶとその時点の金額を入力できます</span></div>';
+  html += '<div class="agechips" role="radiogroup" aria-label="年齢">' + ages.map(function (a, i) { return '<button type="button" role="radio" aria-checked="' + (i === sel) + '" data-act="livingSel" data-arg="' + i + '">' + a + '歳<span>' + (inp.household.headBirthYear + a) + '年 ・ ' + round1(totals[i] / 1e4) + '</span></button>'; }).join('') + '</div>';
+  html += '<h3>' + ages[sel] + '歳の生活費 ・ 月' + round1(totals[sel] / 1e4) + '万円</h3><div class="list">';
+  items.forEach(function (e, k) {
+    var p = e.points[sel], prev = sel > 0 ? e.points[sel - 1].amount : null;
+    var d = prev == null ? 0 : p.amount - prev;
+    var note = e.role === 'rent' ? '住宅購入で終了' : (d === 0 ? (sel ? '前の年齢と同じ' : '') : '前の年齢より ' + (d > 0 ? '+' : '−') + round1(Math.abs(d) / 1e4));
+    html += '<div class="it"><label class="grow" for="' + pid('m.expenses.' + k + '.' + sel) + '"><span style="display:block;font-size:14px">' + esc(e.name) + '</span><span class="note' + (d > 0 ? ' warn' : '') + '">' + esc(note) + '</span></label>' +
+      '<span class="inp sm" style="width:128px"><input class="n" id="' + pid('m.expenses.' + k + '.' + sel) + '" data-path="expenses.' + k + '.points.' + sel + '.amount" data-scale="1e4" inputmode="decimal" value="' + round1(p.amount / 1e4) + '"><span class="unit">' + (e.unit === 'year' ? '万円/年' : '万円/月') + '</span></span></div>';
+  });
+  html += '</div><div class="btns"><button type="button" class="btn small" data-act="copyPrevAge"' + (sel === 0 ? ' disabled' : '') + '>前の年齢からコピー</button><button type="button" class="btn ghost small" data-act="addItem">+ 費目を追加</button></div>';
+  html += '<p class="hint">金額は今の物価で入力します。インフレは自動で上乗せし、入力した年齢の間は直線で予測します。費目名の変更や削除はパソコンの画面か横向きで行えます。</p></section>';
+  return html;
+}
+function tabHousing() {
+  var hs = D.input.housing;
+  var html = '<section class="card"><h2>住宅購入</h2>' + checkField('住宅購入を計算に含める', 'housing.enabled');
+  if (hs.enabled) {
+    html += '<div class="fields">' + numField('購入する年', 'housing.purchaseYear', '年', 1, { int: 1 }) + numField('物件価格', 'housing.price', '万円', 1e4) +
+      numField('頭金(現金から)', 'housing.downPayment', '万円', 1e4) + numField('諸経費(手数料・税など)', 'housing.costs', '万円', 1e4) +
+      numField('ローン金利', 'housing.rate', '%/年', 1, { pct: 1 }) + numField('返済期間', 'housing.years', '年', 1, { int: 1 }) +
+      numField('購入後の維持費(固定資産税・修繕など)', 'housing.maintenance', '万円/年', 1e4) + '</div>' +
+      '<div class="subcard calc">借入額 <b data-calc="loanAmount"></b> ・ 毎月の返済 <b data-calc="loanMonthly"></b> ・ 年間 <b data-calc="loanAnnual"></b><span class="hint">元利均等返済。購入の翌年から返済期間の間、生活費とは別に支出します。</span></div>';
+  }
+  return html + '</section>';
+}
+function tabInvest() {
+  var inp = D.input, inv = inp.invest, start = inp.snapshot.year;
+  var endY = inp.household.headBirthYear + (inp.endHeadAge || 80);
+  var lastSet = Object.keys(inv.byYear).map(Number).filter(function (y) { return inv.byYear[y] > 0; }).reduce(function (m, y) { return Math.max(m, y); }, start);
+  var showTo = ui.investShowAll ? endY : Math.min(endY, Math.max(start + 9, lastSet + 2));
+  var bulk = ui.bulk || { from: start + 1, to: start + 4, amount: 0 };
+  var html = '<section class="card"><div class="head"><h2>積立額(年ごと)</h2><span class="sub">親NISA → 子NISA → 特定口座の順に配分</span></div>';
+  html += '<div class="subcard"><h3>まとめて入力</h3><div class="btns" style="align-items:center">' +
+    '<span class="inp sm" style="width:96px"><input class="n" id="bulk-from" aria-label="開始年" data-bulk="from" inputmode="numeric" value="' + bulk.from + '"><span class="unit">年</span></span><span>〜</span>' +
+    '<span class="inp sm" style="width:96px"><input class="n" id="bulk-to" aria-label="終了年" data-bulk="to" inputmode="numeric" value="' + bulk.to + '"><span class="unit">年</span></span><span>を</span>' +
+    '<span class="inp sm" style="width:116px"><input class="n" id="bulk-amt" aria-label="積立額" data-bulk="amount" inputmode="decimal" value="' + bulk.amount + '"><span class="unit">万円</span></span>' +
+    '<button type="button" class="btn primary small" data-act="bulkInvest">反映</button></div></div>';
+  html += '<div class="list">';
+  for (var y = start; y <= showTo; y++) {
+    var v = inv.byYear[y];
+    html += '<div class="it"><label for="' + pid('invest.byYear.' + y) + '" style="min-width:76px;line-height:1.3"><span style="display:block;font-weight:500">' + y + '年</span><span class="note">' + (y - inp.household.headBirthYear) + '歳</span></label>' +
+      '<span class="inp sm" style="width:130px"><input class="n" id="' + pid('invest.byYear.' + y) + '" data-path="invest.byYear.' + y + '" data-scale="1e4" inputmode="decimal" value="' + (v == null ? '' : round1(v / 1e4)) + '" placeholder="0"><span class="unit">万円</span></span>' +
+      '<span class="note" data-calc-year="' + y + '"></span></div>';
+  }
+  html += '</div><div class="btns">' + (showTo < endY ? '<button type="button" class="btn small" data-act="investAll">' + (showTo + 1) + '年以降も表示</button>' : '') + '</div>';
+  html += checkField('現金が生活防衛資金を下回る年は積立を減らす', 'invest.reduceWhenShort') + '</section>';
+
+  html += '<section class="card"><h2>取り崩し</h2><div class="fields">' + numField('取り崩しを始める年齢(' + personName('head') + ')', 'withdraw.startHeadAge', '歳', 1, { int: 1 }) + numField('毎月の取り崩し額', 'withdraw.monthly', '万円/月', 1e4) + '</div>' +
+    checkField('取り崩し額をインフレに合わせて増やす', 'withdraw.inflate', true) +
+    '<label class="field"><span class="lbl">取り崩す順番</span><span class="inp"><select id="wd-order" data-act="order"><option value="t"' + (inp.withdraw.order && inp.withdraw.order[0] === 'parentNisa' ? '' : ' selected') + '>特定口座 → 親NISA</option><option value="p"' + (inp.withdraw.order && inp.withdraw.order[0] === 'parentNisa' ? ' selected' : '') + '>親NISA → 特定口座</option></select></span></label>' +
+    '<p class="hint">特定口座は売却益に課税されます。子NISAは取り崩さず、そのまま保持します。iDeCoは受取年齢で一括して現金に移します。</p></section>';
+  html += '<section class="card"><h2>生活防衛資金</h2><div class="fields">' + numField('常に残しておく現金', 'withdraw.reserve', '万円', 1e4) + '</div>' +
+    checkField('下回ったら上の順番で追加売却する', 'withdraw.emergency') + '</section>';
+  return html;
+}
+function tabIdeco() {
+  var list = D.input.ideco;
+  var html = '<section class="card"><div class="head"><h2>iDeCo</h2><span class="sub">掛金は現金から引き、節税額は収入に加えます</span></div>';
+  if (!list.length) html += '<p class="hint">登録されていません。</p>';
+  list.forEach(function (d, k) {
+    var b = 'ideco.' + k;
+    html += '<div class="subcard"><div class="head"><h3>' + esc(personName(d.who)) + 'のiDeCo</h3><button type="button" class="btn small danger" data-act="delIdeco" data-arg="' + k + '">削除</button></div><div class="fields">' +
+      '<label class="field"><span class="lbl">加入する人</span>' + whoSelect(b + '.who', '加入する人') + '</label>' +
+      numField('毎月の掛金', b + '.monthly', '万円/月', 1e4) + numField('掛金を始める年', b + '.startYear', '年', 1, { int: 1 }) +
+      numField('掛金を終える年齢', b + '.endAge', '歳', 1, { int: 1 }) + numField('一括で受け取る年齢', b + '.receiveAge', '歳', 1, { int: 1 }) +
+      numField('節税率(所得税+住民税)', b + '.taxSavingRate', '%', 1, { pct: 1 }) + '</div></div>';
+  });
+  html += '<div class="btns"><button type="button" class="btn ghost small" data-act="addIdeco">+ iDeCoを追加</button></div>';
+  html += '<p class="hint">2026年12月から掛金の上限が上がり(会社員で企業年金がない場合は月6.2万円など)、加入できる年齢も70歳未満に広がる予定です。受取時の税金は退職所得控除の範囲内とみなして計算していません。</p></section>';
+  return html;
+}
+function tabChildren() {
+  var ch = D.input.household.children;
+  var html = '<section class="card"><h2>子供</h2><div class="list">' + ch.map(function (c, k) {
+    var b = 'household.children.' + k;
+    return '<div class="it">' + textField('', b + '.name', { bare: 1, label: '子供の名前' }) + '<span class="inp sm" style="width:120px"><input class="n" id="' + pid(b + '.birthYear') + '" aria-label="生まれ年" data-path="' + b + '.birthYear" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(c.birthYear) + '"><span class="unit">年生まれ</span></span><button type="button" class="btn icon" aria-label="' + esc(c.name) + 'を削除" data-act="delChild" data-arg="' + k + '">×</button></div>';
+  }).join('') + '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addChild">+ 子供を追加</button></div>' +
+    '<p class="hint">子供を追加すると、児童手当と子NISAが自動で計算に入ります。教育費は「生活費」や「ライフイベント」に入れてください。</p></section>';
+  html += '<section class="card"><h2>子NISA(子供1人あたり)</h2><div class="fields">' +
+    numField('年間の上限', 'invest.childNisa.annualCap', '万円', 1e4) + numField('総額の上限', 'invest.childNisa.lifetimeCap', '万円', 1e4) +
+    numField('積立を始められる年', 'invest.childNisa.startYear', '年', 1, { int: 1 }) + numField('積立できる年齢(未満)', 'invest.childNisa.untilAge', '歳', 1, { int: 1 }) +
+    '</div><p class="hint">子NISAは親NISAの次に積み立て、18歳以降もそのまま保持します。</p></section>';
+  return html;
+}
+function tabEvents() {
+  var ev = D.input.events;
+  var order = ev.map(function (e, i) { return i; }).sort(function (a, b) { return ev[a].year - ev[b].year; });
+  var html = '<section class="card"><div class="head"><h2>ライフイベント</h2><span class="sub">一時的な支出・収入</span></div><div class="list">';
+  order.forEach(function (k) {
+    var e = ev[k], b = 'events.' + k, isInc = e.amount < 0;
+    html += '<div class="it" style="flex-wrap:wrap"><span class="inp sm" style="width:100px"><input class="n" id="' + pid(b + '.year') + '" aria-label="年" data-path="' + b + '.year" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(e.year) + '"><span class="unit">年</span></span>' +
+      textField('', b + '.name', { bare: 1, label: '内容' }) +
+      '<span class="inp sm" style="width:92px"><select id="' + pid(b + '.kind') + '" aria-label="支出か収入か" data-act="evKind" data-arg="' + k + '"><option value="out"' + (isInc ? '' : ' selected') + '>支出</option><option value="in"' + (isInc ? ' selected' : '') + '>収入</option></select></span>' +
+      '<span class="inp sm" style="width:130px"><input class="n" id="' + pid(b + '.amount') + '" aria-label="金額" data-path="' + b + '.amount" data-scale="1e4" data-abs="' + (isInc ? '-1' : '1') + '" inputmode="decimal" value="' + round1(Math.abs(e.amount) / 1e4) + '"><span class="unit">万円</span></span>' +
+      '<button type="button" class="btn icon" aria-label="このイベントを削除" data-act="delEvent" data-arg="' + k + '">×</button></div>';
+  });
+  html += '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addEvent">+ イベントを追加</button></div><p class="hint">金額はその年の実額で入力します(インフレは上乗せしません)。</p></section>';
+  return html;
+}
+function tabSnapshot() {
+  var inp = D.input, html = '<section class="card"><div class="head"><h2>実績残高(計算の起点)</h2><span class="sub">実際の残高を入れると、その年から計算し直します</span></div>';
+  html += '<div class="fields">' + numField('起点の年', 'snapshot.year', '年', 1, { int: 1 }) + numField('現金・預貯金', 'snapshot.cash', '万円', 1e4) +
+    numField('親NISA 残高', 'snapshot.parentNisa.balance', '万円', 1e4) + numField('親NISA 元本(買付額)', 'snapshot.parentNisa.principal', '万円', 1e4) +
+    numField('特定口座 残高', 'snapshot.taxable.balance', '万円', 1e4) + numField('特定口座 取得額', 'snapshot.taxable.cost', '万円', 1e4) + '</div>';
+  if (inp.household.children.length) {
+    html += '<h3>子NISA</h3><div class="fields">';
+    inp.household.children.forEach(function (c, k) { html += numField(c.name + ' 残高', 'snapshot.childNisa.' + k + '.balance', '万円', 1e4) + numField(c.name + ' 元本', 'snapshot.childNisa.' + k + '.principal', '万円', 1e4); });
+    html += '</div>';
+  }
+  if (inp.ideco.length) {
+    html += '<h3>iDeCo</h3><div class="fields">';
+    inp.ideco.forEach(function (d, k) { html += numField(personName(d.who) + ' 残高', 'snapshot.ideco.' + k + '.balance', '万円', 1e4); });
+    html += '</div>';
+  }
+  html += '<div class="btns"><button type="button" class="btn primary" data-act="snapThisYear">起点を今年(' + nowYear() + '年)にする</button></div>' +
+    '<p class="hint">起点の年を変えても、積立額・ライフイベントなど年で指定した入力はそのまま使います。過去の年の入力は計算に使われません。</p></section>';
+  return html;
+}
+
+// ---------- 年次推移表 ----------
+function tableData() {
+  var inp = D.input, items = inp.expenses.map(function (e) { return e.name; });
+  var kidNames = inp.household.children.map(function (c) { return c.name; });
+  var cols = [
+    { g: '', h: '年齢(' + [personName('head'), personName('spouse')].concat(kidNames).join('/') + ')', l: 1, f: function (r) { return [r.headAge, r.spouseAge].concat(r.childAges).map(function (a) { return a == null || a < 0 ? '—' : a; }).join(' / '); } },
+    { g: 'g-flow', h: '収入', f: function (r) { return cell(r.income); } },
+    { g: 'g-flow', h: '生活費', f: function (r) { return cell(r.living); } },
+    { g: 'g-flow', h: '住宅費', f: function (r) { return cell(r.housingCost); } },
+    { g: 'g-flow', h: 'イベント', f: function (r) { return cell(r.eventCost); } },
+    { g: 'g-flow', h: '収支', f: function (r) { return manTxt(r.net); }, c: function (r) { return r.net < 0 ? 'neg' : 'tot'; } },
+    { g: 'g-inv', h: '積立', f: function (r) { return cell(r.invested); } },
+    { g: 'g-inv', h: 'iDeCo掛金', f: function (r) { return cell(r.idecoIn); } },
+    { g: 'g-inv', h: '取り崩し', f: function (r) { return cell(r.plannedWithdraw + r.emergency + r.idecoReceive); } },
+    { g: 'g-acc', h: '現金', f: function (r) { return manTxt(r.cash); }, c: function (r) { return r.cash < 0 ? 'neg' : ''; } },
+    { g: 'g-acc', h: '親NISA', f: function (r) { return cell(r.parentNisa); } },
+    { g: 'g-acc', h: '子NISA', f: function (r) { return cell(r.childNisaTotal); } },
+    { g: 'g-acc', h: '特定口座', f: function (r) { return cell(r.taxable); } },
+    { g: 'g-acc', h: 'iDeCo', f: function (r) { return cell(r.ideco); } },
+    { g: '', h: '総資産', f: function (r) { return manTxt(r.total); }, c: function () { return 'tot'; } }
+  ];
+  items.forEach(function (name) { cols.push({ g: 'g-living', h: name, f: function (r) { return cell(r.livingByItem[name] || 0); } }); });
+  [['給与', 'salary'], ['退職金', 'bonus'], ['年金', 'pension'], ['児童手当', 'childAllowance'], ['iDeCo節税', 'taxSaving'], ['iDeCo受取', 'idecoReceive'], ['親NISA元本', 'parentPrincipal'], ['特定口座取得額', 'taxableCost'], ['売却時の税', 'withdrawTax'], ['税引後総資産', 'totalAfterTax']].forEach(function (p) {
+    cols.push({ g: 'g-detail', h: p[0], f: function (r) { return cell(r[p[1]]); } });
+  });
+  cols.push({ g: '', h: 'メモ', l: 1, m: 1, f: function (r) {
+    var m = r.eventNames.slice();
+    if (r.reduced) m.push('積立を' + manTxt(r.invested) + '万円に減額');
+    if (r.emergency > 0) m.push('不足分を売却');
+    if (r.idecoReceive > 0) m.push('iDeCo受取');
+    if (r.bonus > 0) m.push('退職金');
+    return m.join(' ・ ');
+  } });
+  return cols;
+}
+function viewTable() {
+  var cols = tableData(), rows = R.rows, hid = ui.tableHidden;
+  var cls = ['flow', 'inv', 'acc', 'living', 'detail'].filter(function (k) { return hid[k]; }).map(function (k) { return 'hide-' + k; }).join(' ');
+  var tg = [['flow', '収支'], ['inv', '積立・取り崩し'], ['acc', '口座残高'], ['living', '生活費の内訳'], ['detail', '収入の内訳・元本・税']];
+  var html = '<div class="head"><div><h1>年次推移表</h1><p class="sub">' + (rows[0] ? rows[0].year : '') + '〜' + (rows.length ? rows[rows.length - 1].year : '') + '年 ・ 単位:万円 ・ 赤字は収支や現金がマイナス</p></div><button type="button" class="btn" data-act="copyCsv">表をCSVでコピー</button></div>';
+  html += '<div class="toggles"><span class="sub" style="margin:0">表示する列</span>' + tg.map(function (t) { return '<button type="button" class="toggle" aria-pressed="' + !hid[t[0]] + '" data-act="toggleCol" data-arg="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>';
+  html += '<div class="tbl-wrap" style="max-height:72vh"><table class="data ' + cls + '"><thead><tr><th scope="col" class="l stick">年</th>' + cols.map(function (c) { return '<th scope="col" class="' + (c.g || '') + (c.l ? ' l' : '') + '">' + esc(c.h) + '</th>'; }).join('') + '</tr></thead><tbody>';
+  rows.forEach(function (r) {
+    var mark = r.headAge === 65 || r.year === rows[0].year;
+    html += '<tr' + (mark ? ' class="mark"' : '') + '><th scope="row" class="l stick">' + r.year + '</th>' + cols.map(function (c) { var k = c.c ? c.c(r) : ''; return '<td class="' + (c.g || '') + (c.l ? ' l' : '') + (c.m ? ' memo' : '') + (k ? ' ' + k : '') + '">' + esc(c.f(r)) + '</td>'; }).join('') + '</tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+function csvText() {
+  var cols = tableData();
+  var lines = [['年'].concat(cols.map(function (c) { return c.h; }))];
+  R.rows.forEach(function (r) { lines.push([r.year].concat(cols.map(function (c) { return String(c.f(r)).replace(/—/g, '0').replace(/,/g, '').replace(/−/g, '-'); }))); });
+  return lines.map(function (l) { return l.map(function (v) { v = String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
+}
+
+// ---------- シナリオ比較 ----------
+var LINE_COLORS = ['var(--accent)', 'var(--c-tax)', 'var(--c-ideco)', 'var(--good)', 'var(--bad)', 'var(--c-kid)'];
+function viewCompare() {
+  var sc = D.scenarios;
+  var sets = [{ name: '現在の条件', res: R }].concat(sc.map(function (s) { var res; try { res = E.simulate(s.input); } catch (e) { res = null; } return { name: s.name, res: res, saved: s.savedAt }; })).filter(function (s) { return s.res && s.res.rows.length; });
+  var html = '<div class="head"><div><h1>シナリオ比較</h1><p class="sub">今の前提条件をシナリオとして保存し、総資産の推移を重ねて比べます</p></div></div>';
+  html += '<section class="card"><h2>現在の条件を保存</h2><div class="btns" style="align-items:center"><span class="inp sm" style="flex:1 1 220px"><input id="sc-name" aria-label="シナリオの名前" placeholder="例:利回り5%・住宅購入を2年遅らせる"></span><button type="button" class="btn primary" data-act="saveScenario">保存</button></div></section>';
+  if (sets.length > 1) {
+    html += '<section class="card chart"><div class="head"><h2>総資産の推移</h2><div class="legend">' + sets.map(function (s, i) { return '<span><i style="background:' + LINE_COLORS[i % LINE_COLORS.length] + '"></i>' + esc(s.name) + '</span>'; }).join('') + '</div></div>' + lineChart(sets) + '</section>';
+  }
+  html += '<section class="card"><h2>シナリオの一覧</h2>';
+  if (!sc.length) html += '<p class="hint">まだ保存したシナリオはありません。条件を変えたら名前を付けて保存してください。</p>';
+  else {
+    html += '<div class="tbl-wrap"><table class="data"><thead><tr><th class="l" scope="col">名前</th><th scope="col">65歳時点</th><th scope="col">最終年齢時点</th><th scope="col">最大</th><th class="l" scope="col">保存日時</th><th class="l" scope="col">操作</th></tr></thead><tbody>' +
+      '<tr class="mark"><th class="l" scope="row">現在の条件</th><td>' + (R.summary.at65 ? bigYen(R.summary.at65.total) : '—') + '</td><td>' + bigYen(R.summary.end.total) + '</td><td>' + bigYen(R.summary.peak.total) + '</td><td class="l">—</td><td></td></tr>' +
+      sc.map(function (s, i) {
+        var res; try { res = E.simulate(s.input); } catch (e) { res = null; }
+        var conf = ui.confirm === 'sc' + i;
+        return '<tr><th class="l" scope="row">' + esc(s.name) + '</th><td>' + (res && res.summary.at65 ? bigYen(res.summary.at65.total) : '—') + '</td><td>' + (res ? bigYen(res.summary.end.total) : '—') + '</td><td>' + (res ? bigYen(res.summary.peak.total) : '—') + '</td><td class="l">' + esc(fmtTime(s.savedAt)) + '</td><td class="l"><div class="btns">' +
+          (conf ? '<span class="sub" style="margin:0">今の条件を上書きします</span><button type="button" class="btn small primary" data-act="applyScenario" data-arg="' + i + '">読み込む</button><button type="button" class="btn small" data-act="cancelConfirm">やめる</button>'
+            : (ui.confirm === 'del' + i ? '<button type="button" class="btn small danger" data-act="delScenario" data-arg="' + i + '">削除する</button><button type="button" class="btn small" data-act="cancelConfirm">やめる</button>'
+              : '<button type="button" class="btn small" data-act="confirm" data-arg="sc' + i + '">この条件を読み込む</button><button type="button" class="btn small danger" data-act="confirm" data-arg="del' + i + '">削除</button>')) +
+          '</div></td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+  return html + '</section>';
+}
+function lineChart(sets) {
+  var W = 1000, H = 300, L = 64, B = 40, T = 10, Rr = 8, ih = H - B - T, iw = W - L - Rr;
+  var y0 = Math.min.apply(null, sets.map(function (s) { return s.res.rows[0].year; }));
+  var y1 = Math.max.apply(null, sets.map(function (s) { return s.res.rows[s.res.rows.length - 1].year; }));
+  var maxV = Math.max.apply(null, sets.map(function (s) { return Math.max.apply(null, s.res.rows.map(function (r) { return r.total; })); }));
+  var nm = niceMax(maxV); var X = function (y) { return L + (y - y0) / Math.max(1, y1 - y0) * iw; }; var Y = function (v) { return T + ih - Math.max(0, v) / nm.max * ih; };
+  var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="シナリオごとの総資産の推移">';
+  for (var t = 0; t <= nm.max + 1; t += nm.step) out += '<line class="grid" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(t) + '" y2="' + Y(t) + '"></line><text class="tick" x="' + (L - 8) + '" y="' + (Y(t) + 4) + '" text-anchor="end">' + tickLabel(t) + '</text>';
+  var hb = D.input.household.headBirthYear;
+  for (var y = y0; y <= y1; y++) if ((y - y0) % 10 === 0) out += '<text class="tick" x="' + X(y) + '" y="' + (H - B + 16) + '" text-anchor="middle">' + y + '</text><text class="tick" x="' + X(y) + '" y="' + (H - B + 32) + '" text-anchor="middle">' + (y - hb) + '歳</text>';
+  sets.forEach(function (s, i) {
+    var c = LINE_COLORS[i % LINE_COLORS.length];
+    var d = s.res.rows.map(function (r, k) { return (k ? 'L' : 'M') + X(r.year).toFixed(1) + ' ' + Y(r.total).toFixed(1); }).join(' ');
+    out += '<path d="' + d + '" style="fill:none;stroke:' + c + '" stroke-width="' + (i === 0 ? 3 : 2) + '"' + (i === 0 ? '' : ' stroke-dasharray="6 4"') + '></path>';
+    var last = s.res.rows[s.res.rows.length - 1];
+    out += '<circle cx="' + X(last.year) + '" cy="' + Y(last.total) + '" r="4" style="fill:' + c + '"></circle>';
+  });
+  return out + '<line class="axis" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + (T + ih) + '" y2="' + (T + ih) + '"></line></svg>';
+}
+
+// ---------- 同期とデータ ----------
+function viewSync() {
+  var st = D.settings, connected = drive.token && Date.now() < drive.exp;
+  var html = '<div class="head"><div><h1>同期とデータ</h1><p class="sub">PC・スマホ・スマートディスプレイで同じデータを使うための設定です</p></div></div>';
+  html += '<section class="card"><h2>Googleドライブと同期</h2>';
+  html += '<label class="field"><span class="lbl">GoogleのクライアントID</span><span class="inp"><input id="client-id" data-setting="clientId" value="' + esc(st.clientId) + '" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off"></span></label>';
+  html += '<div class="btns">' + (connected
+    ? '<button type="button" class="btn primary" data-act="driveSave">Googleドライブに保存</button><button type="button" class="btn" data-act="driveLoad">Googleドライブから読み込む</button><button type="button" class="btn" data-act="driveDisconnect">接続を解除</button>'
+    : '<button type="button" class="btn primary" data-act="driveConnect"' + (st.clientId ? '' : ' disabled') + '>Googleアカウントに接続</button>') + '</div>';
+  html += '<label class="check"><span>変更したら自動でGoogleドライブに保存する</span><input type="checkbox" id="drive-auto" data-setting="driveAuto"' + (st.driveAuto ? ' checked' : '') + '></label>';
+  html += '<p class="status' + (drive.statusType ? ' ' + drive.statusType : '') + '" id="drive-status">' + esc(drive.status || (connected ? '接続しています。' : '接続していません。')) + (drive.lastSync ? ' 最終同期 ' + esc(fmtTime(drive.lastSync)) : '') + '</p>';
+  html += '<p class="hint">データはGoogleドライブのアプリ専用領域(あなたのドライブ内の非表示フォルダ)に「' + DRIVE_FILE + '」として保存され、このアプリからしか見えません。接続にはGoogle Cloudで作るクライアントIDが必要です(手順書を参照)。</p></section>';
+
+  html += '<section class="card"><h2>バックアップ</h2><div class="btns"><button type="button" class="btn" data-act="copyJson">データをコピー</button><button type="button" class="btn" data-act="showImport">データを貼り付けて読み込む</button>' +
+    '<label class="btn" for="file-import">ファイルから読み込む</label><input type="file" id="file-import" accept="application/json,.json" hidden></div>';
+  if (ui.importOpen) html += '<textarea class="json" id="json-in" aria-label="読み込むデータ" placeholder="コピーしたデータを貼り付け"></textarea><div class="btns"><button type="button" class="btn primary" data-act="doImport">読み込む(今のデータを上書き)</button><button type="button" class="btn" data-act="hideImport">やめる</button></div>';
+  html += '<p class="hint">入力内容はこのブラウザにも自動で保存しています。</p></section>';
+
+  html += '<section class="card"><h2>スマートディスプレイ表示</h2><p class="hint">Fire HD 8 の隠しシートに表示する画面です。このページのアドレスの末尾に <b>#display</b> を付けて開くと表示されます。</p><div class="btns"><a class="btn" href="#display">表示を確認する</a></div></section>';
+  html += '<section class="card"><h2>初期状態に戻す</h2><p class="hint">架空の見本データに戻します。今の入力内容は消えます(保存したシナリオは残ります)。</p><div class="btns">' +
+    (ui.confirm === 'reset' ? '<button type="button" class="btn danger" data-act="reset">見本データに戻す</button><button type="button" class="btn" data-act="cancelConfirm">やめる</button>' : '<button type="button" class="btn" data-act="confirm" data-arg="reset">見本データに戻す</button>') + '</div></section>';
+  return html;
+}
+
+// ---------- スマートディスプレイ ----------
+var dpTimer = null, dpLeft = 60;
+function showDisplay() {
+  var el = document.getElementById('display');
+  var s = R.summary, rows = R.rows; if (!rows.length) return;
+  var now = rows[0], inp = D.input, pn = inp.invest.parentNisa;
+  var pct = Math.min(100, Math.round(now.parentPrincipal / pn.lifetimeCap * 100));
+  var nextEv = upcoming().slice(0, 2);
+  var notes = [];
+  if (!R.warnings.length) notes.push(['ok', (inp.endHeadAge || 80) + '歳まで現金がマイナスになる年はありません']);
+  R.warnings.forEach(function (w) { notes.push(['warn', w.message]); });
+  if (s.reducedYears.length) notes.push(['info', s.reducedYears[0] + '年以降、' + s.reducedYears.length + '年分は現金不足のため積立を自動で減らしています']);
+  el.innerHTML = '<div class="dp-top"><div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:16px"><h1>資産の見通し</h1><span class="dp-muted">' + esc(fmtTime(D.savedAt)) + ' 更新 ・ 起点 ' + inp.snapshot.year + '年</span></div>' +
+    '<div style="display:flex;align-items:center;gap:14px"><span class="dp-muted" id="dp-count"></span><button type="button" class="dp-close" id="dp-close">閉じる</button></div></div>' +
+    '<div class="dp-kpis">' +
+    '<div class="dp-card"><span class="dp-muted">現在の総資産</span><span class="dp-val">' + bigYenHtml(now.total) + '</span></div>' +
+    (s.at65 ? '<div class="dp-card"><span class="dp-muted">65歳時点の総資産</span><span class="dp-val">' + bigYenHtml(s.at65.total) + '</span></div>' : '') +
+    '<div class="dp-card"><span class="dp-muted">今年の積立額</span><span class="dp-val">' + manTxt(now.invested) + '<small> 万円</small></span></div>' +
+    '<div class="dp-card"><span class="dp-muted">親NISA枠の使用</span><span class="dp-val">' + pct + '<small> %</small></span><div class="meter" style="background:#2A3644"><div style="width:' + pct + '%;background:#4E9AC7"></div></div></div></div>' +
+    '<div class="dp-main"><section class="dp-card wide chart"><h2 style="font-size:19px">口座別の資産推移</h2>' + stackChart(rows, { h: 520, fs: 19, L: 96, colors: { parentNisa: '#4E9AC7', ideco: '#A897DE', childNisaTotal: '#A9D3EA', taxable: '#E9A15A', cash: '#6B7785' } }) + '</section>' +
+    '<div class="side-col"><section class="dp-card"><h2 style="font-size:19px">次の節目</h2>' + (nextEv.length ? nextEv.map(function (e) { return '<div><div class="dp-muted">' + e.year + '年(' + (e.year - inp.household.headBirthYear) + '歳)</div><div style="font-size:21px;font-weight:700">' + esc(e.name) + ' ' + manTxt(Math.abs(e.amount)) + '万円</div></div>'; }).join('') : '<p class="dp-muted">予定はありません</p>') + '</section>' +
+    '<section class="dp-card" style="flex:1"><h2 style="font-size:19px">お知らせ</h2>' + notes.map(function (n) { var c = n[0] === 'ok' ? '#7CC6A0' : (n[0] === 'warn' ? '#F0A868' : '#9AA8B6'); return '<div style="display:flex;gap:10px;align-items:flex-start;font-size:17px;line-height:1.6"><span aria-hidden="true" style="flex:none;width:12px;height:12px;border-radius:6px;margin-top:8px;background:' + c + '"></span><span>' + esc(n[1]) + '</span></div>'; }).join('') + '</section></div></div>';
+  el.hidden = false;
+  dpLeft = 60; tickDp();
+  clearInterval(dpTimer); dpTimer = setInterval(tickDp, 1000);
+  document.getElementById('dp-close').addEventListener('click', closeDisplay);
+  el.onpointerdown = function () { dpLeft = 60; tickDp(); };
+}
+function tickDp() {
+  var c = document.getElementById('dp-count'); if (c) c.textContent = dpLeft + '秒後に閉じます';
+  if (dpLeft-- <= 0) closeDisplay();
+}
+function closeDisplay() {
+  clearInterval(dpTimer);
+  try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'lifeplan-display-close' }, '*'); } catch (e) {}
+  try { if (window.LifePlanBridge && window.LifePlanBridge.close) { window.LifePlanBridge.close(); return; } } catch (e) {}
+  location.hash = 'home';
+}
+function hideDisplay() { clearInterval(dpTimer); document.getElementById('display').hidden = true; }
+
+// ---------- 計算結果の部分更新 ----------
+function updateCalcs() {
+  var q = function (k) { return document.querySelector('[data-calc="' + k + '"]'); };
+  var s = R.summary;
+  if (q('at65')) q('at65').textContent = s.at65 ? bigYen(s.at65.total) : '—';
+  if (q('end')) q('end').textContent = s.end ? bigYen(s.end.total) : '—';
+  if (q('delta')) q('delta').textContent = deltaTxt(baseline && baseline.at65 && s.at65 ? s.at65.total - baseline.at65 : null);
+  if (q('loanAmount')) { q('loanAmount').textContent = n0(R.loan.amount / 1e4) + '万円'; q('loanMonthly').textContent = round1(R.loan.monthly / 1e4) + '万円'; q('loanAnnual').textContent = round1(R.loan.annual / 1e4) + '万円'; }
+  if (q('caNow') && R.rows[0]) q('caNow').textContent = round1(R.rows[0].childAllowance / 1e4) + '万円';
+  document.querySelectorAll('[data-calc-year]').forEach(function (el) {
+    var y = Number(el.getAttribute('data-calc-year')); var r = R.rows.find(function (x) { return x.year === y; });
+    if (!r) { el.textContent = ''; return; }
+    var parts = [];
+    if (r.parentIn) parts.push('親' + manTxt(r.parentIn));
+    r.childIn.forEach(function (v, i) { if (v) parts.push((D.input.household.children[i] ? D.input.household.children[i].name : '子') + manTxt(v)); });
+    if (r.taxableIn) parts.push('特定' + manTxt(r.taxableIn));
+    el.className = 'note' + (r.reduced ? ' warn' : '');
+    el.textContent = r.reduced ? '現金不足で' + manTxt(r.invested) + '万円に減額' : parts.join('・');
+  });
+}
+
+// ---------- 保存 ----------
+var saveT = null, driveT = null;
+function changed() {
+  if (D.input.isSample && !ui.keepSample) D.input.isSample = false;
+  ui.keepSample = false;
+  D.savedAt = new Date().toISOString();
+  recompute();
+  updateCalcs();
+  clearTimeout(saveT); saveT = setTimeout(persistLocal, 300);
+  if (D.settings.driveAuto && drive.token && Date.now() < drive.exp) { clearTimeout(driveT); driveT = setTimeout(function () { driveSave(true); }, 3000); }
+}
+
+// ---------- 入力イベント ----------
+function onInput(ev) {
+  var t = ev.target;
+  if (t.hasAttribute('data-bulk')) { ui.bulk = ui.bulk || {}; ui.bulk[t.getAttribute('data-bulk')] = t.value; return; }
+  if (t.hasAttribute('data-setting')) {
+    var key = t.getAttribute('data-setting');
+    D.settings[key] = t.type === 'checkbox' ? t.checked : t.value.trim();
+    persistLocal();
+    if (key === 'clientId') { var b = document.querySelector('[data-act="driveConnect"]'); if (b) b.disabled = !D.settings.clientId; }
+    return;
+  }
+  var path = t.getAttribute('data-path'); if (!path) return;
+  if (t.hasAttribute('data-bool')) { setPath(D.input, path, t.checked); if (path === 'housing.enabled') { changed(); render(); return; } }
+  else if (t.hasAttribute('data-text')) setPath(D.input, path, t.value);
+  else {
+    var raw = String(t.value).replace(/[,，\s万円%]/g, '').replace(/[０-９．－]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+    if (raw === '' || raw === '-') {
+      if (path.indexOf('invest.byYear.') === 0) setPath(D.input, path, undefined);
+      else return;
+    } else {
+      var v = Number(raw); if (isNaN(v)) return;
+      if (t.hasAttribute('data-pct')) v = v / 100;
+      else v = v * Number(t.getAttribute('data-scale') || 1);
+      if (t.hasAttribute('data-int')) v = Math.round(v);
+      if (t.hasAttribute('data-abs')) v = Math.abs(v) * Number(t.getAttribute('data-abs'));
+      setPath(D.input, path, v);
+    }
+  }
+  normalize(D.input);
+  changed();
+}
+function onChangeStructural(ev) {
+  var t = ev.target;
+  var path = t.getAttribute('data-path') || '';
+  // 年齢列や生年など、表示の並びに影響する入力は確定時に描き直す
+  if (/^(household\.|income\.persons\.\d+\.points\.\d+\.age|snapshot\.year|endHeadAge|events\.\d+\.year|invest\.childNisa)/.test(path) || t.id === 'file-import') {
+    if (t.id === 'file-import') return importFile(t);
+    render();
+  }
+}
+var ACTS = {
+  tab: function (a) { ui.tab = a; render(); return 'norecalc'; },
+  goSnapshot: function () { ui.tab = 'snapshot'; if (ui.view === 'input') render(); else location.hash = 'input'; return 'norecalc'; },
+  addPoint: function (a) { var p = D.input.income.persons[+a]; var last = p.points[p.points.length - 1]; p.points.push({ age: last ? last.age + 5 : 40, amount: last ? last.amount : 0 }); },
+  delPoint: function (a) { var x = a.split(','); D.input.income.persons[+x[0]].points.splice(+x[1], 1); },
+  addPension: function () { D.input.income.pensions.push({ who: 'head', startAge: 65, annual: 1500000 }); },
+  delPension: function (a) { D.input.income.pensions.splice(+a, 1); },
+  addItem: function () { var ages = D.input.livingAges; D.input.expenses.push({ name: '新しい費目', unit: 'month', points: ages.map(function (g) { return { age: g, amount: 0 }; }) }); },
+  delItem: function (a) { D.input.expenses.splice(+a, 1); },
+  unitYear: function (a, el) { D.input.expenses[+a].unit = el.checked ? 'year' : 'month'; },
+  rent: function (a, el) { var e = D.input.expenses[+a]; if (el.checked) e.role = 'rent'; else delete e.role; },
+  addAgeCol: function () { var ages = D.input.livingAges; var nx = ages[ages.length - 1] + 5; ages.push(nx); D.input.expenses.forEach(function (e) { var l = e.points[e.points.length - 1]; e.points.push({ age: nx, amount: l ? l.amount : 0 }); }); },
+  delAgeCol: function () { var ages = D.input.livingAges; if (ages.length <= 1) return; ages.pop(); D.input.expenses.forEach(function (e) { e.points.pop(); }); ui.livingSel = Math.min(ui.livingSel, ages.length - 1); },
+  livingSel: function (a) { ui.livingSel = +a; render(); return 'norecalc'; },
+  copyPrevAge: function () { var i = ui.livingSel; if (i < 1) return; D.input.expenses.forEach(function (e) { e.points[i].amount = e.points[i - 1].amount; }); },
+  bulkInvest: function () {
+    var b = ui.bulk || {};
+    var f = parseInt(document.getElementById('bulk-from').value, 10), t = parseInt(document.getElementById('bulk-to').value, 10), m = Number(String(document.getElementById('bulk-amt').value).replace(/[,\s]/g, ''));
+    if (isNaN(f) || isNaN(t) || isNaN(m) || t < f) { toast('年と金額を確認してください'); return 'norecalc'; }
+    for (var y = f; y <= t; y++) D.input.invest.byYear[y] = m * 1e4;
+    ui.bulk = { from: f, to: t, amount: m };
+    toast(f + '〜' + t + '年を年' + m + '万円にしました');
+  },
+  investAll: function () { ui.investShowAll = true; render(); return 'norecalc'; },
+  order: function (a, el) { D.input.withdraw.order = el.value === 'p' ? ['parentNisa', 'taxable'] : ['taxable', 'parentNisa']; },
+  addIdeco: function () { var used = D.input.ideco.map(function (d) { return d.who; }); D.input.ideco.push({ who: used.indexOf('head') < 0 ? 'head' : 'spouse', monthly: 23000, startYear: D.input.snapshot.year, endAge: 65, receiveAge: 65, taxSavingRate: 0.2 }); },
+  delIdeco: function (a) { D.input.ideco.splice(+a, 1); D.input.snapshot.ideco.splice(+a, 1); },
+  addChild: function () { D.input.household.children.push({ name: '子供' + (D.input.household.children.length + 1), birthYear: nowYear() + 1 }); },
+  delChild: function (a) { D.input.household.children.splice(+a, 1); D.input.snapshot.childNisa.splice(+a, 1); },
+  addEvent: function () { D.input.events.push({ year: D.input.snapshot.year + 1, name: '新しいイベント', amount: 0 }); },
+  delEvent: function (a) { D.input.events.splice(+a, 1); },
+  evKind: function (a, el) { var e = D.input.events[+a]; e.amount = Math.abs(e.amount) * (el.value === 'in' ? -1 : 1); },
+  snapThisYear: function () { D.input.snapshot.year = nowYear(); toast('起点を' + nowYear() + '年にしました。残高を入力してください'); },
+  toggleCol: function (a) { ui.tableHidden[a] = !ui.tableHidden[a]; render(); return 'norecalc'; },
+  copyCsv: function () { copyText(csvText(), '表をCSVとしてコピーしました'); return 'norecalc'; },
+  saveScenario: function () {
+    var name = (document.getElementById('sc-name').value || '').trim() || ('シナリオ ' + (D.scenarios.length + 1));
+    D.scenarios.push({ name: name, input: clone(D.input), savedAt: new Date().toISOString() });
+    toast('「' + name + '」を保存しました');
+  },
+  confirm: function (a) { ui.confirm = a; render(); return 'norecalc'; },
+  cancelConfirm: function () { ui.confirm = null; render(); return 'norecalc'; },
+  applyScenario: function (a) { D.input = normalize(clone(D.scenarios[+a].input)); ui.confirm = null; toast('「' + D.scenarios[+a].name + '」の条件を読み込みました'); },
+  delScenario: function (a) { var n = D.scenarios[+a].name; D.scenarios.splice(+a, 1); ui.confirm = null; toast('「' + n + '」を削除しました'); },
+  reset: function () { D.input = normalize(clone(DEFAULT_INPUT)); ui.confirm = null; ui.keepSample = true; toast('見本データに戻しました'); },
+  copyJson: function () { copyText(JSON.stringify(D, null, 1), 'データをコピーしました'); return 'norecalc'; },
+  showImport: function () { ui.importOpen = true; render(); return 'norecalc'; },
+  hideImport: function () { ui.importOpen = false; render(); return 'norecalc'; },
+  doImport: function () { var t = document.getElementById('json-in').value; if (applyImported(t)) { ui.importOpen = false; } else return 'norecalc'; },
+  driveConnect: function () { driveConnect(); return 'norecalc'; },
+  driveSave: function () { driveSave(false); return 'norecalc'; },
+  driveLoad: function () { driveLoad(); return 'norecalc'; },
+  driveDisconnect: function () { if (drive.token && window.google && google.accounts && google.accounts.oauth2) google.accounts.oauth2.revoke(drive.token, function () {}); drive.token = null; drive.fileId = null; setDriveStatus('接続を解除しました。', ''); render(); return 'norecalc'; }
+};
+function onClick(ev) {
+  var el = ev.target.closest('[data-act]'); if (!el) return;
+  if (el.tagName === 'SELECT' || (el.tagName === 'INPUT' && el.type === 'checkbox')) return;
+  var fn = ACTS[el.getAttribute('data-act')]; if (!fn) return;
+  var r = fn(el.getAttribute('data-arg'), el);
+  if (r === 'norecalc') return;
+  normalize(D.input); changed(); render();
+}
+function onChange(ev) {
+  var el = ev.target;
+  if (el.hasAttribute('data-act') && (el.tagName === 'SELECT' || el.type === 'checkbox')) {
+    var fn = ACTS[el.getAttribute('data-act')]; if (!fn) return;
+    fn(el.getAttribute('data-arg'), el); normalize(D.input); changed(); render(); return;
+  }
+  onChangeStructural(ev);
+}
+function copyText(text, msg) {
+  try {
+    navigator.clipboard.writeText(text).then(function () { toast(msg); }, function () { fallbackCopy(text, msg); });
+  } catch (e) { fallbackCopy(text, msg); }
+}
+function fallbackCopy(text, msg) {
+  var ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+  toast(ok ? msg : 'コピーできませんでした');
+}
+function applyImported(text) {
+  try {
+    var obj = JSON.parse(text);
+    var inp = obj.input || obj;
+    if (!inp.household || !inp.snapshot || !inp.invest) throw new Error('形式が違います');
+    D.input = normalize(inp);
+    if (obj.scenarios) D.scenarios = obj.scenarios;
+    toast('データを読み込みました');
+    return true;
+  } catch (e) { toast('読み込めませんでした:' + e.message); return false; }
+}
+function importFile(input) {
+  var f = input.files && input.files[0]; if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function () { if (applyImported(String(rd.result))) { normalize(D.input); changed(); render(); } };
+  rd.readAsText(f);
+}
+
+// ---------- Googleドライブ ----------
+function setDriveStatus(msg, type) { drive.status = msg; drive.statusType = type || ''; var el = document.getElementById('drive-status'); if (el) { el.textContent = msg + (drive.lastSync ? ' 最終同期 ' + fmtTime(drive.lastSync) : ''); el.className = 'status' + (type ? ' ' + type : ''); } }
+function loadGis() {
+  return new Promise(function (res, rej) {
+    if (window.google && google.accounts && google.accounts.oauth2) return res();
+    var s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
+    s.onload = function () { res(); }; s.onerror = function () { rej(new Error('Googleのログイン部品を読み込めませんでした。このプレビュー画面では使えません。GitHub Pagesなどに置いた版で接続してください。')); };
+    document.head.appendChild(s);
+  });
+}
+function getToken(prompt) {
+  return loadGis().then(function () {
+    return new Promise(function (res, rej) {
+      var tc = google.accounts.oauth2.initTokenClient({
+        client_id: D.settings.clientId,
+        scope: 'https://www.googleapis.com/auth/drive.appdata',
+        callback: function (r) { if (r.error) return rej(new Error(r.error_description || r.error)); drive.token = r.access_token; drive.exp = Date.now() + (Number(r.expires_in || 3600) - 60) * 1000; res(drive.token); },
+        error_callback: function (e) { rej(new Error(e && e.type === 'popup_closed' ? 'ログイン画面が閉じられました' : 'ログインできませんでした')); }
+      });
+      tc.requestAccessToken({ prompt: prompt });
+    });
+  });
+}
+function ensureToken() { if (drive.token && Date.now() < drive.exp) return Promise.resolve(drive.token); return getToken(''); }
+function api(url, opt) {
+  opt = opt || {}; opt.headers = Object.assign({ Authorization: 'Bearer ' + drive.token }, opt.headers || {});
+  return fetch(url, opt).then(function (r) { if (!r.ok) return r.text().then(function (t) { throw new Error('Googleドライブの応答エラー(' + r.status + ')'); }); return r; });
+}
+function findFile() {
+  if (drive.fileId) return Promise.resolve(drive.fileId);
+  var q = encodeURIComponent("name='" + DRIVE_FILE + "' and trashed=false");
+  return api('https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' + q + '&fields=files(id,modifiedTime)&orderBy=modifiedTime desc')
+    .then(function (r) { return r.json(); }).then(function (j) { drive.fileId = j.files && j.files[0] ? j.files[0].id : null; return drive.fileId; });
+}
+function driveConnect() {
+  setDriveStatus('接続しています…', '');
+  getToken('consent').then(function () { return findFile(); }).then(function (id) {
+    setDriveStatus(id ? '接続しました。Googleドライブに保存済みのデータがあります。' : '接続しました。まだ保存されたデータはありません。', 'okk');
+    render();
+  }).catch(function (e) { setDriveStatus(e.message, 'err'); });
+}
+function driveSave(silent) {
+  var body = JSON.stringify(D);
+  ensureToken().then(findFile).then(function (id) {
+    if (id) return api('https://www.googleapis.com/upload/drive/v3/files/' + id + '?uploadType=media', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: body });
+    var boundary = 'lp' + Date.now();
+    var meta = { name: DRIVE_FILE, parents: ['appDataFolder'], mimeType: 'application/json' };
+    var multi = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(meta) + '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + body + '\r\n--' + boundary + '--';
+    return api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body: multi })
+      .then(function (r) { return r.json(); }).then(function (j) { drive.fileId = j.id; });
+  }).then(function () { drive.lastSync = new Date().toISOString(); setDriveStatus('Googleドライブに保存しました。', 'okk'); if (!silent) toast('Googleドライブに保存しました'); })
+    .catch(function (e) { setDriveStatus(e.message, 'err'); if (!silent) toast('保存できませんでした'); });
+}
+function driveLoad() {
+  ensureToken().then(findFile).then(function (id) {
+    if (!id) { setDriveStatus('Googleドライブに保存されたデータはまだありません。', ''); return; }
+    return api('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media').then(function (r) { return r.json(); }).then(function (obj) {
+      var settings = D.settings;
+      D = obj; D.settings = settings; D.scenarios = D.scenarios || [];
+      D.input = normalize(D.input);
+      recompute(); persistLocal();
+      drive.lastSync = new Date().toISOString();
+      setDriveStatus('Googleドライブから読み込みました(' + fmtTime(D.savedAt) + ' 保存分)。', 'okk');
+      toast('Googleドライブから読み込みました');
+      render();
+    });
+  }).catch(function (e) { setDriveStatus(e.message, 'err'); });
+}
+
+// ---------- 起動 ----------
+D = load() || fresh();
+D.settings = Object.assign({ clientId: '', driveAuto: true }, D.settings || {});
+D.scenarios = D.scenarios || [];
+D.input = normalize(D.input || clone(DEFAULT_INPUT));
+recompute();
+baseline = { at65: R.summary.at65 ? R.summary.at65.total : null };
+var view = document.getElementById('view');
+view.addEventListener('input', onInput);
+view.addEventListener('change', onChange);
+view.addEventListener('click', onClick);
+window.addEventListener('hashchange', route);
+// スマートディスプレイ側から表示を呼び出すための窓口
+window.LifePlanApp = { showDisplay: function () { location.hash = 'display'; }, reloadFromDrive: driveLoad, data: function () { return D; } };
+route();
+})();
+</script>
+
+</body>
+</html>
