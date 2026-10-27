@@ -1158,7 +1158,7 @@ var D = null;            // { input, scenarios, settings, savedAt }
 var R = null;            // 計算結果
 var baseline = null;     // 開いた時点の結果(変更前との差の表示用)
 var ui = { view: 'home', tab: 'basic', livingSel: 0, tableHidden: { living: true, detail: true }, investShowAll: false, confirm: null, bulk: null };
-var drive = { token: null, exp: 0, fileId: null, status: '', statusType: '', lastSync: null };
+var drive = { token: null, exp: 0, status: '', statusType: '', lastSync: null, conflict: null, shares: null };
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function load() {
@@ -1169,7 +1169,7 @@ function persistLocal() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(D)); } catch (e) {}
 }
 function fresh() {
-  return { input: clone(DEFAULT_INPUT), scenarios: [], settings: { clientId: '', driveAuto: true }, savedAt: new Date().toISOString() };
+  return { input: clone(DEFAULT_INPUT), scenarios: [], settings: { clientId: '', apiKey: '', appId: '', driveAuto: true }, savedAt: new Date().toISOString() };
 }
 
 // 入力の整合をとる(子供・iDeCoの残高配列、生活費の年齢列)
@@ -1276,7 +1276,7 @@ var VIEWS = ['home', 'input', 'table', 'compare', 'sync'];
 function route() {
   var h = (location.hash || '').replace('#', '');
   if (h === 'display') { showDisplay(); return; }
-  hideDisplay();
+  hideDisplay(); displayOverride = null;
   ui.view = VIEWS.indexOf(h) >= 0 ? h : 'home';
   render();
 }
@@ -1296,6 +1296,7 @@ function render() {
   else if (ui.view === 'compare') html += viewCompare();
   else html += viewSync();
   v.innerHTML = html;
+  if (ui.view === 'sync' && drive.shares == null && drive.token && Date.now() < drive.exp && D.settings.fileId) refreshShares();
   updateCalcs();
 }
 function toast(msg) {
@@ -1386,8 +1387,8 @@ function insightText() {
   }
   return parts.join('');
 }
-function upcoming() {
-  var inp = D.input, start = inp.snapshot.year, list = [];
+function upcoming(inp) {
+  inp = inp || D.input; var start = inp.snapshot.year, list = [];
   inp.events.forEach(function (e) { if (Number(e.year) >= start) list.push({ year: Number(e.year), name: e.name, amount: e.amount }); });
   if (inp.housing && inp.housing.enabled && inp.housing.purchaseYear >= start) list.push({ year: inp.housing.purchaseYear, name: '住宅購入(頭金・諸経費)', amount: inp.housing.downPayment + (inp.housing.costs || 0) });
   list.sort(function (a, b) { return a.year - b.year; });
@@ -1400,7 +1401,7 @@ function viewHome() {
   var inp = D.input, pn = inp.invest.parentNisa;
   var used = now.parentPrincipal, pct = Math.min(100, Math.round(used / pn.lifetimeCap * 100));
   var html = '<div class="head"><div><h1>資産の見通し</h1><p class="sub">起点:' + inp.snapshot.year + '年の実績残高 ・ 最終保存 ' + esc(fmtTime(D.savedAt)) + '</p></div>' +
-    '<div class="btns"><a class="btn" href="#compare">シナリオを保存</a><button type="button" class="btn primary" data-act="goSnapshot">実績残高を入力して更新</button></div></div>';
+    '<div class="btns">' + (D.settings.fileId ? '<button type="button" class="btn" data-act="driveLoad">最新のデータを読み込む</button>' : '') + '<a class="btn" href="#compare">シナリオを保存</a><button type="button" class="btn primary" data-act="goSnapshot">実績残高を入力して更新</button></div></div>';
   html += '<div class="grid-kpi">' +
     kpi('現在の総資産(' + now.headAge + '歳)', bigYenHtml(now.total), '現金 ' + manTxt(now.cash) + '万円 ・ 運用 ' + manTxt(now.total - now.cash) + '万円') +
     (at65 ? kpi('65歳時点の総資産(' + at65.year + '年)', bigYenHtml(at65.total), '税引後 ' + bigYen(at65.totalAfterTax)) : '') +
@@ -1749,15 +1750,55 @@ function lineChart(sets) {
 // ---------- 同期とデータ ----------
 function viewSync() {
   var st = D.settings, connected = drive.token && Date.now() < drive.exp;
-  var html = '<div class="head"><div><h1>同期とデータ</h1><p class="sub">PC・スマホ・スマートディスプレイで同じデータを使うための設定です</p></div></div>';
-  html += '<section class="card"><h2>Googleドライブと同期</h2>';
-  html += '<label class="field"><span class="lbl">GoogleのクライアントID</span><span class="inp"><input id="client-id" data-setting="clientId" value="' + esc(st.clientId) + '" placeholder="xxxxxxxx.apps.googleusercontent.com" autocomplete="off"></span></label>';
-  html += '<div class="btns">' + (connected
-    ? '<button type="button" class="btn primary" data-act="driveSave">Googleドライブに保存</button><button type="button" class="btn" data-act="driveLoad">Googleドライブから読み込む</button><button type="button" class="btn" data-act="driveDisconnect">接続を解除</button>'
-    : '<button type="button" class="btn primary" data-act="driveConnect"' + (st.clientId ? '' : ' disabled') + '>Googleアカウントに接続</button>') + '</div>';
+  var setupDone = st.clientId && st.apiKey && st.appId;
+  var html = '<div class="head"><div><h1>同期とデータ</h1><p class="sub">家族やスマートディスプレイと同じデータを使うための設定です</p></div></div>';
+
+  html += '<section class="card"><h2>Googleドライブの共有ファイル</h2>';
+  html += '<details' + (setupDone ? '' : ' open') + '><summary style="cursor:pointer;font-size:14px;min-height:32px">接続の設定(最初に一度だけ)</summary><div class="fields" style="margin-top:10px">' +
+    settingField('クライアントID', 'clientId', 'xxxxxxxx.apps.googleusercontent.com') +
+    settingField('APIキー(ファイル選択用)', 'apiKey', 'AIza…') +
+    settingField('プロジェクト番号', 'appId', '123456789012') + '</div>' +
+    '<p class="hint">3つともGoogle Cloudの画面で確認できます(導入手順書の手順2)。この端末のブラウザにだけ保存されます。</p></details>';
+
+  if (drive.conflict) {
+    var c = drive.conflict;
+    html += '<div class="alert"><b>注意</b><span>' + esc(personLabel(c.lastModifyingUser)) + 'が ' + esc(fmtTime(c.modifiedTime)) + ' に新しいデータを保存しています。このまま保存すると、その変更が消えます。</span></div>' +
+      '<div class="btns"><button type="button" class="btn primary" data-act="driveLoad">新しいデータを読み込む</button>' +
+      (ui.confirm === 'overwrite' ? '<button type="button" class="btn danger" data-act="driveForceSave">上書きする</button><button type="button" class="btn" data-act="cancelConfirm">やめる</button>'
+        : '<button type="button" class="btn" data-act="confirm" data-arg="overwrite">自分のデータで上書きする</button>') + '</div>';
+  }
+
+  if (!connected) {
+    html += (st.fileId ? '<p class="calc">保存先:<b>' + esc(st.fileName || 'lifeplan.json') + '</b>' + (st.fileOwner ? '(' + esc(st.fileOwner) + 'のドライブ)' : '') + '</p>' : '') +
+      '<div class="btns"><button type="button" class="btn primary" data-act="driveConnect"' + (st.clientId ? '' : ' disabled') + '>Googleアカウントに接続</button></div>';
+  } else if (!st.fileId) {
+    html += '<p class="calc">保存先のファイルを決めてください。</p><div class="btns">' +
+      '<button type="button" class="btn primary" data-act="driveCreate">新しく作る(今のデータを保存)</button>' +
+      '<button type="button" class="btn" data-act="drivePick">家族から共有されたファイルを選ぶ</button></div>' +
+      '<p class="hint">はじめて使う人は「新しく作る」を選びます。家族が作ったファイルを一緒に使う場合は、共有された後に「共有されたファイルを選ぶ」を押してください。</p>';
+  } else {
+    html += '<p class="calc">保存先:<b>' + esc(st.fileName || 'lifeplan.json') + '</b>' + (st.fileOwner ? '(' + esc(st.fileOwner) + 'のドライブ)' : '') + '</p>' +
+      '<div class="btns"><button type="button" class="btn primary" data-act="driveSave">Googleドライブに保存</button><button type="button" class="btn" data-act="driveLoad">Googleドライブから読み込む</button>' +
+      (ui.confirm === 'switchFile' ? '<button type="button" class="btn" data-act="driveSwitch">保存先を選び直す</button><button type="button" class="btn" data-act="cancelConfirm">やめる</button>' : '<button type="button" class="btn" data-act="confirm" data-arg="switchFile">保存先を変える</button>') +
+      '<button type="button" class="btn" data-act="driveDisconnect">接続を解除</button></div>';
+  }
   html += '<label class="check"><span>変更したら自動でGoogleドライブに保存する</span><input type="checkbox" id="drive-auto" data-setting="driveAuto"' + (st.driveAuto ? ' checked' : '') + '></label>';
   html += '<p class="status' + (drive.statusType ? ' ' + drive.statusType : '') + '" id="drive-status">' + esc(drive.status || (connected ? '接続しています。' : '接続していません。')) + (drive.lastSync ? ' 最終同期 ' + esc(fmtTime(drive.lastSync)) : '') + '</p>';
-  html += '<p class="hint">データはGoogleドライブのアプリ専用領域(あなたのドライブ内の非表示フォルダ)に「' + DRIVE_FILE + '」として保存され、このアプリからしか見えません。接続にはGoogle Cloudで作るクライアントIDが必要です(手順書を参照)。</p></section>';
+  html += '<p class="hint">データはGoogleドライブの「ライフプラン」フォルダに「' + DRIVE_FILE + '」として保存されます。このアプリが扱えるのは、アプリで作ったファイルと、あなたが選んだファイルだけです。ドライブのアプリから直接書き換えないでください。保存の前に、ほかの人が先に保存していないかを確認します。</p></section>';
+
+  if (connected && st.fileId) {
+    html += '<section class="card"><h2>家族と共有</h2>';
+    if (st.fileOwnedByMe === false) {
+      html += '<p class="hint">このファイルは' + esc(st.fileOwner || '家族') + 'から共有されています。共有の管理は持ち主の画面で行います。</p>';
+    } else {
+      html += '<div id="share-list">' + shareListHtml() + '</div>' +
+        '<div class="btns" style="align-items:center"><span class="inp sm" style="flex:1 1 240px"><input id="share-email" type="email" autocomplete="email" aria-label="共有する人のGmailアドレス" placeholder="家族のGmailアドレス"></span>' +
+        '<span class="inp sm" style="width:150px"><select id="share-role" aria-label="権限"><option value="writer">編集できる</option><option value="reader">見るだけ</option></select></span>' +
+        '<button type="button" class="btn primary" data-act="shareAdd">共有する</button></div>' +
+        '<p class="hint">ここで追加した人だけがデータを見られます。相手にはGoogleから共有のお知らせメールが届きます。相手は自分のスマホでこのアプリを開き、自分のGoogleアカウントで接続して「共有されたファイルを選ぶ」を押します。Google Cloudの公開ステータスが「テスト中」の場合は、相手のアドレスをテストユーザーにも追加してください。</p>';
+    }
+    html += '</section>';
+  }
 
   html += '<section class="card"><h2>バックアップ</h2><div class="btns"><button type="button" class="btn" data-act="copyJson">データをコピー</button><button type="button" class="btn" data-act="showImport">データを貼り付けて読み込む</button>' +
     '<label class="btn" for="file-import">ファイルから読み込む</label><input type="file" id="file-import" accept="application/json,.json" hidden></div>';
@@ -1769,20 +1810,49 @@ function viewSync() {
     (ui.confirm === 'reset' ? '<button type="button" class="btn danger" data-act="reset">見本データに戻す</button><button type="button" class="btn" data-act="cancelConfirm">やめる</button>' : '<button type="button" class="btn" data-act="confirm" data-arg="reset">見本データに戻す</button>') + '</div></section>';
   return html;
 }
+function settingField(label, key, ph) {
+  return '<label class="field"><span class="lbl">' + esc(label) + '</span><span class="inp"><input id="set-' + key + '" data-setting="' + key + '" value="' + esc(D.settings[key] || '') + '" placeholder="' + esc(ph) + '" autocomplete="off" spellcheck="false"></span></label>';
+}
+function personLabel(u) {
+  if (!u) return 'ほかの人';
+  if (u.me) return 'あなた(別の端末)';
+  return u.displayName || u.emailAddress || 'ほかの人';
+}
+function shareListHtml() {
+  if (drive.shares == null) return '<p class="hint">共有している人を確認しています…</p>';
+  var people = drive.shares.filter(function (p) { return p.role !== 'owner'; });
+  var anyone = drive.shares.filter(function (p) { return p.type === 'anyone' || p.type === 'domain'; });
+  var html = '';
+  if (anyone.length) html += '<div class="alert"><b>注意</b><span>リンクを知っている人なら誰でも見られる設定になっています。下の「解除」を押して解除してください。</span></div>';
+  if (!people.length) return html + '<p class="hint">まだ誰とも共有していません。</p>';
+  html += '<div class="list">' + people.map(function (p) {
+    var who = p.type === 'anyone' ? 'リンクを知っている全員' : (p.type === 'domain' ? '組織内の全員' : (p.displayName ? p.displayName + '(' + (p.emailAddress || '') + ')' : (p.emailAddress || '不明')));
+    var conf = ui.confirm === 'unshare' + p.id;
+    return '<div class="it"><span class="grow">' + esc(who) + '<span class="note" style="display:block">' + (p.role === 'reader' || p.role === 'commenter' ? '見るだけ' : '編集できる') + '</span></span>' +
+      (conf ? '<button type="button" class="btn small danger" data-act="shareRemove" data-arg="' + esc(p.id) + '">解除する</button><button type="button" class="btn small" data-act="cancelConfirm">やめる</button>'
+        : '<button type="button" class="btn small" data-act="confirm" data-arg="unshare' + esc(p.id) + '">解除</button>') + '</div>';
+  }).join('') + '</div>';
+  return html;
+}
 
 // ---------- スマートディスプレイ ----------
-var dpTimer = null, dpLeft = 60;
+// Fire のアプリは、Googleドライブから読んだデータを LifePlanApp.display(データ, {timeout: 秒}) で渡す。
+// 渡されなかった場合は、このブラウザに保存されたデータで表示する。
+var dpTimer = null, dpLeft = 60, dpTimeout = 60, displayOverride = null;
 function showDisplay() {
   var el = document.getElementById('display');
-  var s = R.summary, rows = R.rows; if (!rows.length) return;
-  var now = rows[0], inp = D.input, pn = inp.invest.parentNisa;
+  var src = displayOverride || { input: D.input, R: R, savedAt: D.savedAt };
+  var inp = src.input, res = src.R, s = res.summary, rows = res.rows;
+  if (!rows.length) return;
+  var now = rows[0], pn = inp.invest.parentNisa;
   var pct = Math.min(100, Math.round(now.parentPrincipal / pn.lifetimeCap * 100));
-  var nextEv = upcoming().slice(0, 2);
+  var nextEv = upcoming(inp).slice(0, 2);
   var notes = [];
-  if (!R.warnings.length) notes.push(['ok', (inp.endHeadAge || 80) + '歳まで現金がマイナスになる年はありません']);
-  R.warnings.forEach(function (w) { notes.push(['warn', w.message]); });
-  if (s.reducedYears.length) notes.push(['info', s.reducedYears[0] + '年以降、' + s.reducedYears.length + '年分は現金不足のため積立を自動で減らしています']);
-  el.innerHTML = '<div class="dp-top"><div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:16px"><h1>資産の見通し</h1><span class="dp-muted">' + esc(fmtTime(D.savedAt)) + ' 更新 ・ 起点 ' + inp.snapshot.year + '年</span></div>' +
+  if (inp.isSample) notes.push(['warn', '架空の見本データを表示しています']);
+  if (!res.warnings.length) notes.push(['ok', (inp.endHeadAge || 80) + '歳まで現金がマイナスになる年はありません']);
+  res.warnings.forEach(function (w) { notes.push(['warn', w.message]); });
+  if (s.reducedYears && s.reducedYears.length) notes.push(['info', s.reducedYears[0] + '年以降、' + s.reducedYears.length + '年分は現金不足のため積立を自動で減らしています']);
+  el.innerHTML = '<div class="dp-top"><div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:16px"><h1>資産の見通し</h1><span class="dp-muted">' + esc(fmtTime(src.savedAt)) + ' 更新 ・ 起点 ' + inp.snapshot.year + '年</span></div>' +
     '<div style="display:flex;align-items:center;gap:14px"><span class="dp-muted" id="dp-count"></span><button type="button" class="dp-close" id="dp-close">閉じる</button></div></div>' +
     '<div class="dp-kpis">' +
     '<div class="dp-card"><span class="dp-muted">現在の総資産</span><span class="dp-val">' + bigYenHtml(now.total) + '</span></div>' +
@@ -1793,10 +1863,10 @@ function showDisplay() {
     '<div class="side-col"><section class="dp-card"><h2 style="font-size:19px">次の節目</h2>' + (nextEv.length ? nextEv.map(function (e) { return '<div><div class="dp-muted">' + e.year + '年(' + (e.year - inp.household.headBirthYear) + '歳)</div><div style="font-size:21px;font-weight:700">' + esc(e.name) + ' ' + manTxt(Math.abs(e.amount)) + '万円</div></div>'; }).join('') : '<p class="dp-muted">予定はありません</p>') + '</section>' +
     '<section class="dp-card" style="flex:1"><h2 style="font-size:19px">お知らせ</h2>' + notes.map(function (n) { var c = n[0] === 'ok' ? '#7CC6A0' : (n[0] === 'warn' ? '#F0A868' : '#9AA8B6'); return '<div style="display:flex;gap:10px;align-items:flex-start;font-size:17px;line-height:1.6"><span aria-hidden="true" style="flex:none;width:12px;height:12px;border-radius:6px;margin-top:8px;background:' + c + '"></span><span>' + esc(n[1]) + '</span></div>'; }).join('') + '</section></div></div>';
   el.hidden = false;
-  dpLeft = 60; tickDp();
+  dpLeft = dpTimeout; tickDp();
   clearInterval(dpTimer); dpTimer = setInterval(tickDp, 1000);
   document.getElementById('dp-close').addEventListener('click', closeDisplay);
-  el.onpointerdown = function () { dpLeft = 60; tickDp(); };
+  el.onpointerdown = function () { dpLeft = dpTimeout; tickDp(); };
 }
 function tickDp() {
   var c = document.getElementById('dp-count'); if (c) c.textContent = dpLeft + '秒後に閉じます';
@@ -1804,11 +1874,21 @@ function tickDp() {
 }
 function closeDisplay() {
   clearInterval(dpTimer);
-  try { window.parent && window.parent !== window && window.parent.postMessage({ type: 'lifeplan-display-close' }, '*'); } catch (e) {}
   try { if (window.LifePlanBridge && window.LifePlanBridge.close) { window.LifePlanBridge.close(); return; } } catch (e) {}
+  try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'lifeplan-display-close' }, '*'); } catch (e) {}
   location.hash = 'home';
 }
 function hideDisplay() { clearInterval(dpTimer); document.getElementById('display').hidden = true; }
+function displayFromData(obj, opts) {
+  try {
+    var data = typeof obj === 'string' ? JSON.parse(obj) : obj;
+    var inp = normalize(clone(data.input || data));
+    displayOverride = { input: inp, R: E.simulate(inp), savedAt: data.savedAt };
+    dpTimeout = (opts && opts.timeout) || 60;
+    if (location.hash === '#display') showDisplay(); else location.hash = 'display';
+    return true;
+  } catch (e) { return false; }
+}
 
 // ---------- 計算結果の部分更新 ----------
 function updateCalcs() {
@@ -1840,7 +1920,7 @@ function changed() {
   recompute();
   updateCalcs();
   clearTimeout(saveT); saveT = setTimeout(persistLocal, 300);
-  if (D.settings.driveAuto && drive.token && Date.now() < drive.exp) { clearTimeout(driveT); driveT = setTimeout(function () { driveSave(true); }, 3000); }
+  if (D.settings.driveAuto && D.settings.fileId && drive.token && Date.now() < drive.exp) { clearTimeout(driveT); driveT = setTimeout(function () { driveSave(true, false); }, 3000); }
 }
 
 // ---------- 入力イベント ----------
@@ -1851,7 +1931,7 @@ function onInput(ev) {
     var key = t.getAttribute('data-setting');
     D.settings[key] = t.type === 'checkbox' ? t.checked : t.value.trim();
     persistLocal();
-    if (key === 'clientId') { var b = document.querySelector('[data-act="driveConnect"]'); if (b) b.disabled = !D.settings.clientId; }
+    if (key === 'clientId') { var b = document.querySelector('[data-act="driveConnect"]'); if (b) b.disabled = !D.settings.clientId; drive.token = null; }
     return;
   }
   var path = t.getAttribute('data-path'); if (!path) return;
@@ -1933,9 +2013,15 @@ var ACTS = {
   hideImport: function () { ui.importOpen = false; render(); return 'norecalc'; },
   doImport: function () { var t = document.getElementById('json-in').value; if (applyImported(t)) { ui.importOpen = false; } else return 'norecalc'; },
   driveConnect: function () { driveConnect(); return 'norecalc'; },
-  driveSave: function () { driveSave(false); return 'norecalc'; },
+  driveCreate: function () { driveCreate(); return 'norecalc'; },
+  drivePick: function () { drivePick(); return 'norecalc'; },
+  driveSave: function () { driveSave(false, false); return 'norecalc'; },
+  driveForceSave: function () { driveSave(false, true); return 'norecalc'; },
   driveLoad: function () { driveLoad(); return 'norecalc'; },
-  driveDisconnect: function () { if (drive.token && window.google && google.accounts && google.accounts.oauth2) google.accounts.oauth2.revoke(drive.token, function () {}); drive.token = null; drive.fileId = null; setDriveStatus('接続を解除しました。', ''); render(); return 'norecalc'; }
+  driveSwitch: function () { var st = D.settings; st.fileId = ''; st.fileName = ''; st.fileOwner = ''; st.fileRev = ''; st.fileRevLoaded = ''; drive.conflict = null; drive.shares = null; ui.confirm = null; persistLocal(); setDriveStatus('保存先を選び直してください。', ''); render(); return 'norecalc'; },
+  driveDisconnect: function () { if (drive.token && window.google && google.accounts && google.accounts.oauth2) google.accounts.oauth2.revoke(drive.token, function () {}); drive.token = null; setDriveStatus('接続を解除しました。', ''); render(); return 'norecalc'; },
+  shareAdd: function () { shareAdd(); return 'norecalc'; },
+  shareRemove: function (a) { shareRemove(a); return 'norecalc'; }
 };
 function onClick(ev) {
   var el = ev.target.closest('[data-act]'); if (!el) return;
@@ -1983,22 +2069,32 @@ function importFile(input) {
   rd.readAsText(f);
 }
 
-// ---------- Googleドライブ ----------
+// ---------- Googleドライブ(共有ファイル方式) ----------
+var DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+var DRIVE_FOLDER = 'ライフプラン';
+var META_FIELDS = 'id,name,headRevisionId,modifiedTime,ownedByMe,owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress,me)';
 function setDriveStatus(msg, type) { drive.status = msg; drive.statusType = type || ''; var el = document.getElementById('drive-status'); if (el) { el.textContent = msg + (drive.lastSync ? ' 最終同期 ' + fmtTime(drive.lastSync) : ''); el.className = 'status' + (type ? ' ' + type : ''); } }
-function loadGis() {
+function loadScript(src) {
   return new Promise(function (res, rej) {
-    if (window.google && google.accounts && google.accounts.oauth2) return res();
-    var s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true;
-    s.onload = function () { res(); }; s.onerror = function () { rej(new Error('Googleのログイン部品を読み込めませんでした。このプレビュー画面では使えません。GitHub Pagesなどに置いた版で接続してください。')); };
+    var s = document.createElement('script'); s.src = src; s.async = true;
+    s.onload = function () { res(); };
+    s.onerror = function () { rej(new Error('Googleの部品を読み込めませんでした。このプレビュー画面では使えません。GitHub Pagesに置いた版で接続してください。')); };
     document.head.appendChild(s);
   });
+}
+function loadGis() { return window.google && google.accounts && google.accounts.oauth2 ? Promise.resolve() : loadScript('https://accounts.google.com/gsi/client'); }
+function loadPicker() {
+  var ready = function () { return new Promise(function (res) { gapi.load('picker', function () { res(); }); }); };
+  if (window.google && google.picker) return Promise.resolve();
+  if (window.gapi) return ready();
+  return loadScript('https://apis.google.com/js/api.js').then(ready);
 }
 function getToken(prompt) {
   return loadGis().then(function () {
     return new Promise(function (res, rej) {
       var tc = google.accounts.oauth2.initTokenClient({
         client_id: D.settings.clientId,
-        scope: 'https://www.googleapis.com/auth/drive.appdata',
+        scope: DRIVE_SCOPE,
         callback: function (r) { if (r.error) return rej(new Error(r.error_description || r.error)); drive.token = r.access_token; drive.exp = Date.now() + (Number(r.expires_in || 3600) - 60) * 1000; res(drive.token); },
         error_callback: function (e) { rej(new Error(e && e.type === 'popup_closed' ? 'ログイン画面が閉じられました' : 'ログインできませんでした')); }
       });
@@ -2009,52 +2105,148 @@ function getToken(prompt) {
 function ensureToken() { if (drive.token && Date.now() < drive.exp) return Promise.resolve(drive.token); return getToken(''); }
 function api(url, opt) {
   opt = opt || {}; opt.headers = Object.assign({ Authorization: 'Bearer ' + drive.token }, opt.headers || {});
-  return fetch(url, opt).then(function (r) { if (!r.ok) return r.text().then(function (t) { throw new Error('Googleドライブの応答エラー(' + r.status + ')'); }); return r; });
+  return fetch(url, opt).then(function (r) {
+    if (r.ok) return r;
+    if (r.status === 404) throw new Error('保存先のファイルが見つかりません。削除されたか、共有が解除された可能性があります。');
+    if (r.status === 401 || r.status === 403) throw new Error('このファイルを扱う権限がありません(' + r.status + ')。');
+    throw new Error('Googleドライブの応答エラー(' + r.status + ')');
+  });
 }
-function findFile() {
-  if (drive.fileId) return Promise.resolve(drive.fileId);
+var DAPI = 'https://www.googleapis.com/drive/v3/files';
+function rememberFile(m) {
+  var st = D.settings;
+  st.fileId = m.id; st.fileName = m.name;
+  st.fileOwnedByMe = m.ownedByMe !== false;
+  st.fileOwner = m.owners && m.owners[0] ? (m.ownedByMe ? 'あなた' : (m.owners[0].displayName || m.owners[0].emailAddress)) : '';
+  if (m.headRevisionId) st.fileRev = m.headRevisionId;
+  persistLocal();
+}
+function fetchMeta() { return api(DAPI + '/' + D.settings.fileId + '?fields=' + encodeURIComponent(META_FIELDS)).then(function (r) { return r.json(); }); }
+function payload() { return JSON.stringify({ format: 'lifeplan', v: 1, input: D.input, scenarios: D.scenarios, savedAt: D.savedAt }); }
+function findExisting() {
   var q = encodeURIComponent("name='" + DRIVE_FILE + "' and trashed=false");
-  return api('https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' + q + '&fields=files(id,modifiedTime)&orderBy=modifiedTime desc')
-    .then(function (r) { return r.json(); }).then(function (j) { drive.fileId = j.files && j.files[0] ? j.files[0].id : null; return drive.fileId; });
+  return api(DAPI + '?q=' + q + '&orderBy=modifiedTime desc&pageSize=5&fields=' + encodeURIComponent('files(' + META_FIELDS + ')'))
+    .then(function (r) { return r.json(); }).then(function (j) { return (j.files || [])[0] || null; });
 }
 function driveConnect() {
   setDriveStatus('接続しています…', '');
-  getToken('consent').then(function () { return findFile(); }).then(function (id) {
-    setDriveStatus(id ? '接続しました。Googleドライブに保存済みのデータがあります。' : '接続しました。まだ保存されたデータはありません。', 'okk');
+  getToken(D.settings.fileId ? '' : 'consent').then(function () {
+    if (D.settings.fileId) return fetchMeta().then(function (m) { rememberFile(m); return m; });
+    return findExisting().then(function (m) { if (m) rememberFile(m); return m; });
+  }).then(function (m) {
+    if (m) {
+      var newer = m.headRevisionId && m.headRevisionId !== D.settings.fileRevLoaded;
+      setDriveStatus('接続しました。' + (newer ? '「Googleドライブから読み込む」で最新のデータを読み込めます。' : ''), 'okk');
+    } else setDriveStatus('接続しました。保存先のファイルを決めてください。', 'okk');
     render();
+    if (D.settings.fileId) refreshShares();
+  }).catch(function (e) { setDriveStatus(e.message, 'err'); render(); });
+}
+function findOrCreateFolder() {
+  var q = encodeURIComponent("name='" + DRIVE_FOLDER + "' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+  return api(DAPI + '?q=' + q + '&fields=files(id)').then(function (r) { return r.json(); }).then(function (j) {
+    if (j.files && j.files[0]) return j.files[0].id;
+    return api(DAPI + '?fields=id', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: DRIVE_FOLDER, mimeType: 'application/vnd.google-apps.folder' }) })
+      .then(function (r) { return r.json(); }).then(function (f) { return f.id; });
+  });
+}
+function driveCreate() {
+  setDriveStatus('ファイルを作っています…', '');
+  ensureToken().then(findOrCreateFolder).then(function (folderId) {
+    var boundary = 'lp' + Date.now();
+    var meta = { name: DRIVE_FILE, parents: [folderId], mimeType: 'application/json' };
+    var multi = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(meta) + '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + payload() + '\r\n--' + boundary + '--';
+    return api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=' + encodeURIComponent(META_FIELDS), { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body: multi });
+  }).then(function (r) { return r.json(); }).then(function (m) {
+    rememberFile(m); D.settings.fileRevLoaded = m.headRevisionId; persistLocal();
+    drive.lastSync = new Date().toISOString(); drive.shares = [];
+    setDriveStatus('「' + DRIVE_FOLDER + '」フォルダに保存しました。', 'okk'); toast('Googleドライブに保存しました'); render();
   }).catch(function (e) { setDriveStatus(e.message, 'err'); });
 }
-function driveSave(silent) {
-  var body = JSON.stringify(D);
-  ensureToken().then(findFile).then(function (id) {
-    if (id) return api('https://www.googleapis.com/upload/drive/v3/files/' + id + '?uploadType=media', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: body });
-    var boundary = 'lp' + Date.now();
-    var meta = { name: DRIVE_FILE, parents: ['appDataFolder'], mimeType: 'application/json' };
-    var multi = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(meta) + '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + body + '\r\n--' + boundary + '--';
-    return api('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body: multi })
-      .then(function (r) { return r.json(); }).then(function (j) { drive.fileId = j.id; });
-  }).then(function () { drive.lastSync = new Date().toISOString(); setDriveStatus('Googleドライブに保存しました。', 'okk'); if (!silent) toast('Googleドライブに保存しました'); })
-    .catch(function (e) { setDriveStatus(e.message, 'err'); if (!silent) toast('保存できませんでした'); });
+function drivePick() {
+  var st = D.settings;
+  if (!st.apiKey || !st.appId) { setDriveStatus('ファイルを選ぶには、接続の設定でAPIキーとプロジェクト番号を入力してください。', 'err'); return; }
+  ensureToken().then(loadPicker).then(function () {
+    var shared = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes('application/json').setOwnedByMe(false).setQuery(DRIVE_FILE);
+    var mine = new google.picker.DocsView(google.picker.ViewId.DOCS).setMimeTypes('application/json').setOwnedByMe(true).setQuery(DRIVE_FILE);
+    var picker = new google.picker.PickerBuilder()
+      .setTitle('ライフプランのファイルを選ぶ')
+      .setLocale('ja')
+      .addView(shared).addView(mine)
+      .setOAuthToken(drive.token).setDeveloperKey(st.apiKey).setAppId(st.appId)
+      .setCallback(function (d) {
+        if (d.action !== google.picker.Action.PICKED || !d.docs || !d.docs[0]) return;
+        st.fileId = d.docs[0].id;
+        fetchMeta().then(function (m) { rememberFile(m); setDriveStatus('「' + m.name + '」を保存先にしました。続けて読み込みます…', 'okk'); return driveLoad(); })
+          .catch(function (e) { setDriveStatus(e.message, 'err'); render(); });
+      }).build();
+    picker.setVisible(true);
+  }).catch(function (e) { setDriveStatus(e.message, 'err'); });
+}
+var saving = false;
+function driveSave(silent, force) {
+  if (saving || !D.settings.fileId) return;
+  if (drive.conflict && !force) { setDriveStatus('ほかの人の新しいデータがあるため、自動保存を止めています。', 'err'); return; }
+  saving = true;
+  ensureToken().then(fetchMeta).then(function (m) {
+    var known = D.settings.fileRevLoaded;
+    if (!force && known && m.headRevisionId && m.headRevisionId !== known) {
+      drive.conflict = m; setDriveStatus('ほかの端末か家族が先に保存しています。どちらを残すか選んでください。', 'err');
+      if (ui.view === 'sync') render(); else toast('Googleドライブに新しいデータがあります(同期とデータを確認)');
+      return null;
+    }
+    return api('https://www.googleapis.com/upload/drive/v3/files/' + D.settings.fileId + '?uploadType=media&fields=' + encodeURIComponent(META_FIELDS), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: payload() })
+      .then(function (r) { return r.json(); }).then(function (m2) {
+        rememberFile(m2); D.settings.fileRevLoaded = m2.headRevisionId; persistLocal();
+        drive.conflict = null; ui.confirm = null;
+        drive.lastSync = new Date().toISOString(); setDriveStatus('Googleドライブに保存しました。', 'okk');
+        if (!silent) toast('Googleドライブに保存しました');
+        if (force && ui.view === 'sync') render();
+      });
+  }).catch(function (e) { setDriveStatus(e.message, 'err'); if (!silent) toast('保存できませんでした'); })
+    .then(function () { saving = false; });
 }
 function driveLoad() {
-  ensureToken().then(findFile).then(function (id) {
-    if (!id) { setDriveStatus('Googleドライブに保存されたデータはまだありません。', ''); return; }
-    return api('https://www.googleapis.com/drive/v3/files/' + id + '?alt=media').then(function (r) { return r.json(); }).then(function (obj) {
-      var settings = D.settings;
-      D = obj; D.settings = settings; D.scenarios = D.scenarios || [];
-      D.input = normalize(D.input);
+  return ensureToken().then(fetchMeta).then(function (m) {
+    return api(DAPI + '/' + m.id + '?alt=media').then(function (r) { return r.json(); }).then(function (obj) {
+      if (!obj || !obj.input) throw new Error('ファイルの中身を読み取れませんでした');
+      D.input = normalize(obj.input); D.scenarios = obj.scenarios || D.scenarios || []; D.savedAt = obj.savedAt || m.modifiedTime;
+      rememberFile(m); D.settings.fileRevLoaded = m.headRevisionId;
+      drive.conflict = null; ui.confirm = null;
       recompute(); persistLocal();
+      baseline = { at65: R.summary.at65 ? R.summary.at65.total : null };
       drive.lastSync = new Date().toISOString();
-      setDriveStatus('Googleドライブから読み込みました(' + fmtTime(D.savedAt) + ' 保存分)。', 'okk');
-      toast('Googleドライブから読み込みました');
+      setDriveStatus('Googleドライブから読み込みました(' + fmtTime(m.modifiedTime) + ' ' + personLabel(m.lastModifyingUser) + 'が保存)。', 'okk');
+      toast('最新のデータを読み込みました');
       render();
     });
-  }).catch(function (e) { setDriveStatus(e.message, 'err'); });
+  }).catch(function (e) { setDriveStatus(e.message, 'err'); toast('読み込めませんでした'); render(); });
+}
+function refreshShares() {
+  if (!D.settings.fileId || D.settings.fileOwnedByMe === false) return;
+  drive.shares = null;
+  ensureToken().then(function () { return api(DAPI + '/' + D.settings.fileId + '/permissions?fields=' + encodeURIComponent('permissions(id,type,role,emailAddress,displayName)')); })
+    .then(function (r) { return r.json(); }).then(function (j) { drive.shares = j.permissions || []; var el = document.getElementById('share-list'); if (el) el.innerHTML = shareListHtml(); })
+    .catch(function (e) { drive.shares = []; var el = document.getElementById('share-list'); if (el) el.innerHTML = '<p class="status err">' + esc(e.message) + '</p>'; });
+}
+function shareAdd() {
+  var email = (document.getElementById('share-email').value || '').trim();
+  var role = document.getElementById('share-role').value;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { toast('メールアドレスを確認してください'); return; }
+  ensureToken().then(function () {
+    return api(DAPI + '/' + D.settings.fileId + '/permissions?sendNotificationEmail=true&emailMessage=' + encodeURIComponent('ライフプランシミュレーターのデータを共有しました。'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'user', role: role, emailAddress: email }) });
+  }).then(function () { toast(email + ' と共有しました'); render(); refreshShares(); })
+    .catch(function (e) { toast('共有できませんでした:' + e.message); });
+}
+function shareRemove(pid) {
+  ensureToken().then(function () { return api(DAPI + '/' + D.settings.fileId + '/permissions/' + encodeURIComponent(pid), { method: 'DELETE' }); })
+    .then(function () { ui.confirm = null; toast('共有を解除しました'); render(); refreshShares(); })
+    .catch(function (e) { toast('解除できませんでした:' + e.message); });
 }
 
 // ---------- 起動 ----------
 D = load() || fresh();
-D.settings = Object.assign({ clientId: '', driveAuto: true }, D.settings || {});
+D.settings = Object.assign({ clientId: '', apiKey: '', appId: '', driveAuto: true }, D.settings || {});
 D.scenarios = D.scenarios || [];
 D.input = normalize(D.input || clone(DEFAULT_INPUT));
 recompute();
@@ -2065,7 +2257,7 @@ view.addEventListener('change', onChange);
 view.addEventListener('click', onClick);
 window.addEventListener('hashchange', route);
 // スマートディスプレイ側から表示を呼び出すための窓口
-window.LifePlanApp = { showDisplay: function () { location.hash = 'display'; }, reloadFromDrive: driveLoad, data: function () { return D; } };
+window.LifePlanApp = { showDisplay: function () { displayOverride = null; location.hash = 'display'; }, display: displayFromData, close: closeDisplay };
 route();
 })();
 </script>
