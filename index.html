@@ -199,6 +199,42 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
 #display .tick { fill: #9AA8B6; font-size: 19px; }
 #display .grid { stroke: #2E3A48; stroke-dasharray: 3 3; }
 #display .axis { stroke: #4A5868; }
+/* グラフの拡大表示 */
+.chart-open { display: block; width: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; position: relative; border-radius: 10px; text-align: left; }
+.chart-open:hover { background: var(--surface-2); }
+.chart-hint { position: absolute; right: 8px; top: 2px; font-size: 12px; color: var(--muted); background: var(--surface); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line); }
+#zoom { position: fixed; inset: 0; z-index: 120; background: var(--bg); color: var(--fg); display: flex; flex-direction: column; gap: 10px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+#zoom[hidden] { display: none !important; }
+#zoom.dk { --bg: #0F1720; --surface: #18222D; --surface-2: #202C39; --fg: #E8EDF2; --muted: #9AA8B6; --line: #2C3946; --grid: #26323F; --axis: #4A5868;
+  --c-parent: #4E9AC7; --c-kid: #A9D3EA; --c-tax: #E9A15A; --c-ideco: #A897DE; --c-cash: #6B7785; --bad: #F08A6C; --good: #7CC6A0; --warn: #F0A868; color-scheme: dark; }
+.zm-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.zm-top h2 { font-size: 18px; }
+.zm-body { flex: 1; min-height: 0; display: flex; gap: 14px; }
+.zm-chart { flex: 1 1 auto; min-width: 0; min-height: 0; background: var(--surface); border-radius: var(--radius); padding: 10px 10px 6px; display: flex; flex-direction: column; }
+.zm-svg { flex: 1; min-height: 0; touch-action: none; cursor: crosshair; }
+.zm-svg svg { width: 100%; height: 100%; display: block; }
+.zm-svg .grid { stroke: var(--grid); stroke-dasharray: 3 3; } .zm-svg .axis { stroke: var(--axis); } .zm-svg .tick { fill: var(--muted); }
+.zm-svg rect.hit { fill: transparent; }
+.zm-panel { flex: 0 0 300px; min-width: 0; background: var(--surface); border-radius: var(--radius); padding: 16px 18px; overflow: auto; display: flex; flex-direction: column; gap: 10px; font-variant-numeric: tabular-nums; }
+.zm-panel h3 { font-size: 20px; }
+.zm-panel .ages { font-size: 13px; color: var(--muted); }
+.zm-total { font-size: 28px; font-weight: 700; line-height: 1.2; }
+.zm-total small { font-size: 14px; font-weight: 500; }
+.zm-grp { display: flex; flex-direction: column; border-top: 1px solid var(--line); padding-top: 8px; }
+.zm-grp h4 { margin: 0 0 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.zm-row { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; line-height: 1.75; }
+.zm-row span:first-child { display: inline-flex; align-items: center; gap: 6px; }
+.zm-row i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.zm-row.b { font-weight: 700; }
+.zm-row .neg { color: var(--bad); }
+.zm-memo { font-size: 13px; color: var(--muted); line-height: 1.6; }
+.zm-nav { display: flex; gap: 8px; }
+@media (max-width: 760px), (max-aspect-ratio: 1/1) {
+  .zm-body { flex-direction: column; }
+  .zm-chart { flex: 0 0 auto; height: 46vh; }
+  .zm-panel { flex: 1 1 auto; }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 
@@ -223,6 +259,7 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
   <a href="#sync" data-nav="sync">同期</a>
 </nav>
 <div id="display" hidden></div>
+<div id="zoom" hidden role="dialog" aria-modal="true" aria-label="資産推移の拡大"></div>
 <div id="toast" class="toast" hidden role="status"></div>
 
 <script>
@@ -1322,19 +1359,20 @@ var SERIES = [
 ];
 function stackChart(rows, opts) {
   opts = opts || {};
-  var fs = opts.fs || 12, W = 1000, H = opts.h || 300, L = opts.L || 64, B = fs * 2 + 16, T = 10, Rr = 8;
+  var fs = opts.fs || 12, W = 1000, H = opts.h || 300, L = opts.L || 64, B = fs * 2 + 16, T = Math.max(10, Math.round(fs * 0.9)), Rr = 8;
+  var fst = opts.fs ? ' style="font-size:' + fs + 'px"' : '', sel = opts.sel;
   var ih = H - B - T, iw = W - L - Rr;
   var maxV = Math.max.apply(null, rows.map(function (r) { return SERIES.reduce(function (s, x) { return s + Math.max(0, r[x.key]); }, 0); }));
   var nm = niceMax(maxV); var sc = function (v) { return v / nm.max * ih; };
   var bw = iw / rows.length, gap = Math.min(3, bw * 0.25);
-  var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(opts.label || '口座別の資産推移') + '">';
+  var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(opts.label || '口座別の資産推移') + '"' + (opts.id ? ' id="' + opts.id + '"' : '') + ' data-l="' + L + '" data-bw="' + bw + '">';
   for (var t = 0; t <= nm.max + 1; t += nm.step) {
     var y = T + ih - sc(t);
-    out += '<line class="grid" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + y + '" y2="' + y + '"></line><text class="tick" x="' + (L - 8) + '" y="' + (y + 4) + '" text-anchor="end">' + tickLabel(t) + '</text>';
+    out += '<line class="grid" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + y + '" y2="' + y + '"></line><text class="tick" x="' + (L - 8) + '" y="' + (y + 4) + '" text-anchor="end"' + fst + '>' + tickLabel(t) + '</text>';
   }
   rows.forEach(function (r, i) {
     var x = L + i * bw + gap / 2, w = bw - gap, y = T + ih;
-    var g = '<g class="bar"><title>' + r.year + '年(' + r.headAge + '歳) 総資産 ' + bigYen(r.total) + '\n' + SERIES.map(function (s) { return s.name + ' ' + manTxt(r[s.key]) + '万円'; }).join(' / ') + '</title>';
+    var g = '<g class="bar"' + (sel != null && sel !== i ? ' opacity="0.42"' : '') + '><title>' + r.year + '年(' + r.headAge + '歳) 総資産 ' + bigYen(r.total) + '\n' + SERIES.map(function (s) { return s.name + ' ' + manTxt(r[s.key]) + '万円'; }).join(' / ') + '</title>';
     g += '<rect class="hit" x="' + (L + i * bw) + '" y="' + T + '" width="' + bw + '" height="' + ih + '"></rect>';
     SERIES.forEach(function (s, k) {
       var hgt = sc(Math.max(0, r[s.key]));
@@ -1345,10 +1383,11 @@ function stackChart(rows, opts) {
     });
     g += '</g>';
     out += g;
+    if (sel === i) out += '<rect x="' + (L + i * bw - 1).toFixed(1) + '" y="' + T + '" width="' + (bw + 2).toFixed(1) + '" height="' + ih + '" rx="3" style="fill:none;stroke:' + (opts.selColor || 'var(--fg)') + '" stroke-width="' + Math.max(1.5, fs / 8) + '" stroke-dasharray="' + (fs / 2) + ' ' + (fs / 3) + '"></rect>';
     var every = rows.length > 30 ? 10 : 5;
     if ((r.year - rows[0].year) % every === 0) {
       var cx = L + i * bw + bw / 2;
-      out += '<text class="tick" x="' + cx + '" y="' + (H - B + fs + 4) + '" text-anchor="middle">' + r.year + '</text><text class="tick" x="' + cx + '" y="' + (H - B + fs * 2 + 8) + '" text-anchor="middle">' + r.headAge + '歳</text>';
+      out += '<text class="tick" x="' + cx + '" y="' + (H - B + fs + 4) + '" text-anchor="middle"' + fst + '>' + r.year + '</text><text class="tick" x="' + cx + '" y="' + (H - B + fs * 2 + 8) + '" text-anchor="middle"' + fst + '>' + r.headAge + '歳</text>';
     }
   });
   out += '<line class="axis" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + (T + ih) + '" y2="' + (T + ih) + '"></line></svg>';
@@ -1410,7 +1449,7 @@ function viewHome() {
     '</div>';
   if (inp.isSample) html += '<div class="alert"><b>見本</b><span>表示しているのは架空の見本データです。「前提条件」の各タブと「実績残高」を、ご自身の値に書き換えてください。</span></div>';
   if (R.warnings.length) html += R.warnings.map(function (w) { return '<div class="alert"><b>注意</b><span>' + esc(w.message) + '。積立額や取り崩し額、生活防衛資金を見直してください。</span></div>'; }).join('');
-  html += '<section class="card chart"><div class="head"><h2>口座別の資産推移</h2>' + legendHtml() + '</div>' + stackChart(rows) + '<p class="insight">' + esc(insightText()) + '</p></section>';
+  html += '<section class="card chart"><div class="head"><h2>口座別の資産推移</h2>' + legendHtml() + '</div><button type="button" class="chart-open" data-act="zoomChart" aria-label="グラフを拡大して年ごとの金額を見る">' + stackChart(rows) + '<span class="chart-hint">タップで拡大</span></button><p class="insight">' + esc(insightText()) + '</p></section>';
   var ms = milestones();
   html += '<div class="row"><section class="card wide"><h2>節目ごとの資産</h2><div class="tbl-wrap"><table class="data"><thead><tr><th class="l" scope="col">節目</th><th scope="col">現金</th><th scope="col">親NISA</th><th scope="col">子NISA</th><th scope="col">特定口座</th><th scope="col">iDeCo</th><th scope="col">総資産(万円)</th></tr></thead><tbody>' +
     ms.map(function (m) { var r = m.row; return '<tr><th class="l" scope="row">' + esc(m.name) + '<div class="sub" style="margin:0">' + r.year + '年 ・ ' + r.headAge + '歳</div></th><td>' + cell(r.cash) + '</td><td>' + cell(r.parentNisa) + '</td><td>' + cell(r.childNisaTotal) + '</td><td>' + cell(r.taxable) + '</td><td>' + cell(r.ideco) + '</td><td class="tot">' + manTxt(r.total) + '</td></tr>'; }).join('') +
@@ -1734,7 +1773,7 @@ function lineChart(sets) {
   var maxV = Math.max.apply(null, sets.map(function (s) { return Math.max.apply(null, s.res.rows.map(function (r) { return r.total; })); }));
   var nm = niceMax(maxV); var X = function (y) { return L + (y - y0) / Math.max(1, y1 - y0) * iw; }; var Y = function (v) { return T + ih - Math.max(0, v) / nm.max * ih; };
   var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="シナリオごとの総資産の推移">';
-  for (var t = 0; t <= nm.max + 1; t += nm.step) out += '<line class="grid" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(t) + '" y2="' + Y(t) + '"></line><text class="tick" x="' + (L - 8) + '" y="' + (Y(t) + 4) + '" text-anchor="end">' + tickLabel(t) + '</text>';
+  for (var t = 0; t <= nm.max + 1; t += nm.step) out += '<line class="grid" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(t) + '" y2="' + Y(t) + '"></line><text class="tick" x="' + (L - 8) + '" y="' + (Y(t) + 4) + '" text-anchor="end"' + fst + '>' + tickLabel(t) + '</text>';
   var hb = D.input.household.headBirthYear;
   for (var y = y0; y <= y1; y++) if ((y - y0) % 10 === 0) out += '<text class="tick" x="' + X(y) + '" y="' + (H - B + 16) + '" text-anchor="middle">' + y + '</text><text class="tick" x="' + X(y) + '" y="' + (H - B + 32) + '" text-anchor="middle">' + (y - hb) + '歳</text>';
   sets.forEach(function (s, i) {
@@ -1866,6 +1905,8 @@ function showDisplay() {
   dpLeft = dpTimeout; tickDp();
   clearInterval(dpTimer); dpTimer = setInterval(tickDp, 1000);
   document.getElementById('dp-close').addEventListener('click', closeDisplay);
+  var dch = el.querySelector('.dp-card.wide');
+  if (dch) { dch.style.cursor = 'pointer'; dch.addEventListener('click', function () { openZoom(src); }); }
   el.onpointerdown = function () { dpLeft = dpTimeout; tickDp(); };
 }
 function tickDp() {
@@ -1873,12 +1914,12 @@ function tickDp() {
   if (dpLeft-- <= 0) closeDisplay();
 }
 function closeDisplay() {
-  clearInterval(dpTimer);
+  clearInterval(dpTimer); closeZoom();
   try { if (window.LifePlanBridge && window.LifePlanBridge.close) { window.LifePlanBridge.close(); return; } } catch (e) {}
   try { if (window.parent && window.parent !== window) window.parent.postMessage({ type: 'lifeplan-display-close' }, '*'); } catch (e) {}
   location.hash = 'home';
 }
-function hideDisplay() { clearInterval(dpTimer); document.getElementById('display').hidden = true; }
+function hideDisplay() { clearInterval(dpTimer); closeZoom(); document.getElementById('display').hidden = true; }
 function displayFromData(obj, opts) {
   try {
     var data = typeof obj === 'string' ? JSON.parse(obj) : obj;
@@ -1888,6 +1929,109 @@ function displayFromData(obj, opts) {
     if (location.hash === '#display') showDisplay(); else location.hash = 'display';
     return true;
   } catch (e) { return false; }
+}
+
+// ---------- グラフの拡大表示 ----------
+var ZM = null; // { rows, inp, dark, sel }
+function openZoom(src) {
+  var rows, inp, dark = false;
+  if (src) { rows = src.R.rows; inp = src.input; dark = true; }
+  else { rows = R.rows; inp = D.input; }
+  if (!rows || !rows.length) return;
+  var sel = 0;
+  if (ZM && ZM.rows === rows) sel = ZM.sel;
+  ZM = { rows: rows, inp: inp, dark: dark, sel: sel, prevFocus: document.activeElement };
+  var el = document.getElementById('zoom');
+  el.className = dark ? 'dk' : '';
+  el.innerHTML = '<div class="zm-top"><h2>口座別の資産推移</h2>' + legendHtml() +
+    '<div class="zm-nav"><button type="button" class="btn small" id="zm-prev" aria-label="前の年">◀ 前の年</button><button type="button" class="btn small" id="zm-next" aria-label="次の年">次の年 ▶</button><button type="button" class="btn small" id="zm-close">閉じる</button></div></div>' +
+    '<div class="zm-body"><div class="zm-chart"><div class="zm-svg" id="zm-svg"></div><p class="hint" style="margin:4px 4px 0">グラフを触ると、その年の金額を表示します。指を左右に動かすと年を変えられます。</p></div><div class="zm-panel" id="zm-panel" aria-live="polite"></div></div>';
+  el.hidden = false;
+  document.getElementById('zm-close').onclick = closeZoom;
+  document.getElementById('zm-prev').onclick = function () { zoomSelect(ZM.sel - 1); };
+  document.getElementById('zm-next').onclick = function () { zoomSelect(ZM.sel + 1); };
+  var box = document.getElementById('zm-svg');
+  var down = false;
+  var pick = function (e) {
+    var svg = box.querySelector('svg'); if (!svg) return;
+    var rc = svg.getBoundingClientRect();
+    var x = (e.clientX - rc.left) / rc.width * 1000;
+    var Lm = Number(svg.getAttribute('data-l')), bw = Number(svg.getAttribute('data-bw'));
+    var i = Math.floor((x - Lm) / bw);
+    zoomSelect(Math.max(0, Math.min(ZM.rows.length - 1, i)));
+  };
+  box.onpointerdown = function (e) { down = true; try { box.setPointerCapture(e.pointerId); } catch (_) {} pick(e); if (ZM.dark) dpLeft = dpTimeout; };
+  box.onpointermove = function (e) { if (down || e.pointerType === 'mouse') pick(e); };
+  box.onpointerup = box.onpointercancel = function () { down = false; };
+  el.onpointerdown = function () { if (ZM && ZM.dark) dpLeft = dpTimeout; };
+  drawZoom();
+  window.addEventListener('resize', drawZoom);
+  document.addEventListener('keydown', zoomKey);
+  document.getElementById('zm-close').focus();
+}
+function closeZoom() {
+  var el = document.getElementById('zoom');
+  if (!el || el.hidden) return;
+  el.hidden = true; el.innerHTML = '';
+  window.removeEventListener('resize', drawZoom);
+  document.removeEventListener('keydown', zoomKey);
+  if (ZM && ZM.prevFocus && ZM.prevFocus.focus) try { ZM.prevFocus.focus(); } catch (_) {}
+}
+function zoomKey(e) {
+  if (e.key === 'Escape') { closeZoom(); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft') { zoomSelect(ZM.sel - 1); e.preventDefault(); }
+  else if (e.key === 'ArrowRight') { zoomSelect(ZM.sel + 1); e.preventDefault(); }
+}
+function zoomSelect(i) {
+  if (!ZM) return;
+  i = Math.max(0, Math.min(ZM.rows.length - 1, i));
+  if (i === ZM.sel && document.getElementById('zm-svg').firstChild) return;
+  ZM.sel = i; drawZoom();
+}
+function drawZoom() {
+  if (!ZM) return;
+  var box = document.getElementById('zm-svg'); if (!box) return;
+  var w = Math.max(200, box.clientWidth), h = Math.max(160, box.clientHeight);
+  var k = 1000 / w;                       // 画面の1pxあたりのグラフ上の長さ
+  var fs = Math.round(13 * k * 10) / 10;  // 画面上で約13pxの文字
+  var H = Math.round(1000 * h / w);
+  var colors = ZM.dark ? { parentNisa: '#4E9AC7', ideco: '#A897DE', childNisaTotal: '#A9D3EA', taxable: '#E9A15A', cash: '#6B7785' } : null;
+  box.innerHTML = stackChart(ZM.rows, { h: H, fs: fs, L: Math.round(fs * 4.8), sel: ZM.sel, colors: colors, label: '口座別の資産推移(拡大)' });
+  document.getElementById('zm-panel').innerHTML = zoomPanel(ZM.rows[ZM.sel], ZM.inp);
+  document.getElementById('zm-prev').disabled = ZM.sel <= 0;
+  document.getElementById('zm-next').disabled = ZM.sel >= ZM.rows.length - 1;
+}
+function zoomPanel(r, inp) {
+  var h = inp.household, names = [(h.headName || '本人') + ' ' + r.headAge + '歳'];
+  if (r.spouseAge != null) names.push((h.spouseName || '配偶者') + ' ' + r.spouseAge + '歳');
+  (h.children || []).forEach(function (c, i) { var a = r.childAges[i]; if (a != null && a >= 0) names.push((c.name || '子供') + ' ' + a + '歳'); });
+  var row = function (label, v, opt) {
+    opt = opt || {};
+    if (!opt.always && Math.round(v / 1e4) === 0) return '';
+    return '<div class="zm-row' + (opt.b ? ' b' : '') + '"><span>' + (opt.c ? '<i style="background:' + opt.c + '"></i>' : '') + esc(label) + '</span><span class="' + (opt.neg && v < 0 ? 'neg' : '') + '">' + manTxt(v) + '万円</span></div>';
+  };
+  var colorOf = {}; SERIES.forEach(function (s) { colorOf[s.key] = s.color; });
+  var memo = r.eventNames.slice();
+  if (r.reduced) memo.push('現金不足のため積立を' + manTxt(r.invested) + '万円に減額');
+  if (r.emergency > 0) memo.push('現金不足分 ' + manTxt(r.emergency) + '万円を売却');
+  if (r.idecoReceive > 0) memo.push('iDeCoを一括受取');
+  if (r.bonus > 0) memo.push('退職金を受取');
+  var out = '<div><h3>' + r.year + '年</h3><div class="ages">' + esc(names.join(' ・ ')) + '</div></div>' +
+    '<div><div class="kpi-lbl">総資産</div><div class="zm-total">' + bigYenHtml(r.total) + '</div><div class="kpi-note">税引後 ' + bigYen(r.totalAfterTax) + '</div></div>';
+  out += '<div class="zm-grp"><h4>口座の残高(年末)</h4>' +
+    row('親NISA', r.parentNisa, { c: colorOf.parentNisa, always: 1 }) + row('iDeCo', r.ideco, { c: colorOf.ideco }) +
+    row('子NISA', r.childNisaTotal, { c: colorOf.childNisaTotal }) + row('特定口座', r.taxable, { c: colorOf.taxable }) +
+    row('現金', r.cash, { c: colorOf.cash, always: 1, neg: 1 }) + '</div>';
+  out += '<div class="zm-grp"><h4>その年の収入</h4>' +
+    row('給与(手取り)', r.salary) + row('退職金', r.bonus) + row('年金', r.pension) + row('児童手当', r.childAllowance) +
+    row('一時的な収入', r.eventIncome) + row('iDeCoの節税', r.taxSaving) + row('収入の合計', r.income, { b: 1, always: 1 }) + '</div>';
+  out += '<div class="zm-grp"><h4>その年の支出</h4>' +
+    row('生活費', r.living) + row('住宅費', r.housingCost) + row('イベント', r.eventCost) + row('支出の合計', r.expense, { b: 1, always: 1 }) +
+    row('年間収支', r.net, { b: 1, always: 1, neg: 1 }) + '</div>';
+  var flow = row('積立', r.invested) + row('iDeCo掛金', r.idecoIn) + row('取り崩し', r.plannedWithdraw) + row('不足分の売却', r.emergency) + row('iDeCo受取', r.idecoReceive);
+  if (flow) out += '<div class="zm-grp"><h4>積立と取り崩し</h4>' + flow + '</div>';
+  if (memo.length) out += '<div class="zm-grp"><h4>メモ</h4><div class="zm-memo">' + esc(memo.join(' ・ ')) + '</div></div>';
+  return out;
 }
 
 // ---------- 計算結果の部分更新 ----------
@@ -1996,6 +2140,7 @@ var ACTS = {
   delEvent: function (a) { D.input.events.splice(+a, 1); },
   evKind: function (a, el) { var e = D.input.events[+a]; e.amount = Math.abs(e.amount) * (el.value === 'in' ? -1 : 1); },
   snapThisYear: function () { D.input.snapshot.year = nowYear(); toast('起点を' + nowYear() + '年にしました。残高を入力してください'); },
+  zoomChart: function () { openZoom(null); return 'norecalc'; },
   toggleCol: function (a) { ui.tableHidden[a] = !ui.tableHidden[a]; render(); return 'norecalc'; },
   copyCsv: function () { copyText(csvText(), '表をCSVとしてコピーしました'); return 'norecalc'; },
   saveScenario: function () {
