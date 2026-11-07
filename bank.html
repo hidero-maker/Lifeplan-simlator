@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>口座残高の入力</title><meta name="theme-color" content="#16181c">
+<style>
+:root{--bg:#16181c;--k:#1f2227;--tx:#f2efe9;--mu:#a9a49b;--ac:#e8a95b;--ln:#33383f;--gn:#5fd08a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;-webkit-text-size-adjust:100%}
+.hd{padding:18px 18px 12px;background:#1b1e23}.hd small{color:var(--gn);font-size:12px}.hd b{display:block;font-size:21px;margin:2px 0}.hd span{font-size:12px;color:var(--mu)}
+.box{margin:10px 14px 0;background:var(--k);border-radius:14px;padding:12px 14px}.ed{border:1px solid var(--ac)}
+.ed .t{font-size:13px;color:var(--mu)}.ed input{width:100%;background:none;border:0;border-bottom:2px solid var(--ac);color:var(--tx);font-size:30px;padding:4px 0;outline:none;font-variant-numeric:tabular-nums}
+.ed .n{font-size:13px;color:var(--mu);margin-top:6px}.ed label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mu);margin-top:8px}.ed label input{font-size:15px;border:1px solid var(--ln);border-radius:8px;padding:4px 8px;width:auto}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;border:1px solid transparent}.row.sel{border-color:var(--ac)}.row b{display:block;font-size:15px;font-weight:600}.row small{font-size:12px;color:var(--mu)}.row .v{font-size:19px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bt{display:flex;gap:8px;margin:12px 14px}.bt button,.btn{flex:1;padding:13px;border-radius:99px;border:1px solid var(--ln);background:none;color:var(--tx);font-size:15px;font-family:inherit}.bt .p,.btn.p{background:var(--ac);border-color:var(--ac);color:#17171a;font-weight:700}
+.msg{margin:10px 16px;font-size:13px;color:var(--mu);line-height:1.6}.msg.ok{color:var(--gn)}.msg.er{color:#f0937a}
+.cid input{width:100%;font-size:14px;padding:10px;border-radius:10px;border:1px solid var(--ln);background:#121417;color:var(--tx);margin:8px 0}
+</style></head><body>
+<div class="hd"><small id="st"></small><b>口座残高の入力</b><span>入力するとGoogleドライブに保存され、家のタブレットに反映されます</span></div>
+<div id="main"></div>
+<script>
+var FILE='smartdisplay-bank.json',SCOPE='https://www.googleapis.com/auth/drive.file',DAPI='https://www.googleapis.com/drive/v3/files';
+var tok='',texp=0,fid='',data=null,sel=null,msg='',mt='';
+function $(s){return document.querySelector(s)}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function ymd(d){return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)}
+function md(s){var m=String(s).split('-');return m.length===3?(+m[1])+'/'+(+m[2]):''}
+function yen(v){return '¥'+Math.round(v).toLocaleString('ja-JP')}
+// クライアントIDは、同じサイトのライフプランのアプリに保存されているものを使う(このページには書かない)
+function cid(){try{var o=JSON.parse(localStorage.getItem('lifeplan-simulator.v1')||'{}');if(o.settings&&o.settings.clientId)return o.settings.clientId}catch(e){}try{return localStorage.getItem('sdbank.cid')||''}catch(e){return''}}
+function loadGis(){return new Promise(function(res,rej){if(window.google&&google.accounts&&google.accounts.oauth2)return res();var s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onload=res;s.onerror=function(){rej(new Error('Googleのログイン部品を読み込めませんでした'))};document.head.appendChild(s)})}
+function login(){return loadGis().then(function(){return new Promise(function(res,rej){var tc=google.accounts.oauth2.initTokenClient({client_id:cid(),scope:SCOPE,callback:function(r){if(r.error)return rej(new Error(r.error));tok=r.access_token;texp=Date.now()+((+r.expires_in||3600)-60)*1000;res()},error_callback:function(){rej(new Error('ログインできませんでした'))}});tc.requestAccessToken({prompt:''})})})}
+function api(u,o){o=o||{};o.headers=Object.assign({Authorization:'Bearer '+tok},o.headers||{});return fetch(u,o).then(function(r){if(!r.ok)throw new Error('Googleドライブの応答エラー('+r.status+')');return r})}
+function last(id){var a=(data.ent||[]).filter(function(x){return x.id===id}).sort(function(x,y){return x.d<y.d?-1:x.d>y.d?1:(x.at||0)-(y.at||0)});return a[a.length-1]||null}
+function own(id){var o=(data.own||[]).filter(function(x){return x.id===id})[0];return o?o.n:''}
+function load(){msg='読み込んでいます…';mt='';draw();
+ var q=encodeURIComponent("name='"+FILE+"' and trashed=false");
+ return api(DAPI+'?q='+q+'&orderBy=modifiedTime%20desc&pageSize=1&fields=files(id)').then(function(r){return r.json()}).then(function(j){
+  if(!j.files||!j.files.length)throw new Error('タブレットのデータが見つかりません。タブレットの設定(お金 → 口座残高)で「スマホから入力」を「使う」にして、数分後に開き直してください');
+  fid=j.files[0].id;return api(DAPI+'/'+fid+'?alt=media').then(function(r){return r.json()})}).then(function(o){data=o;if(!sel&&data.acc&&data.acc.length)sel=data.acc[0].id;msg='';draw()})
+ .catch(function(e){msg=e.message;mt='er';draw()})}
+function rec(same){var a=(data.acc||[]).filter(function(x){return x.id===sel})[0];if(!a)return;var l=last(a.id),v;
+ if(same){if(!l){msg='まだ前回の残高がありません';mt='er';draw();return}v=l.v}else{v=+String($('#v').value).replace(/[^\d]/g,'');if(!$('#v').value.trim()){msg='金額を入れてください';mt='er';draw();return}}
+ var d=($('#d')&&$('#d').value)||ymd(new Date());msg='保存しています…';mt='';draw();
+ // 保存の直前に最新を読み直して、追記して書き戻す
+ (Date.now()<texp?Promise.resolve():login()).then(function(){return api(DAPI+'/'+fid+'?alt=media')}).then(function(r){return r.json()}).then(function(o){
+  o.ent=(o.ent||[]).filter(function(x){return!(x.id===a.id&&x.d===d)});o.ent.push({id:a.id,d:d,v:v,at:Date.now(),by:'phone'});o.at=new Date().toISOString();
+  return api('https://www.googleapis.com/upload/drive/v3/files/'+fid+'?uploadType=media',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).then(function(){data=o})})
+ .then(function(){var L=data.acc||[],i=L.findIndex(function(x){return x.id===a.id});msg=(a.n||'口座')+'を記録しました('+yen(v)+')。数分でタブレットに反映されます';mt='ok';if(i>=0&&i<L.length-1)sel=L[i+1].id;draw()})
+ .catch(function(e){msg='保存できませんでした: '+e.message;mt='er';draw()})}
+function draw(){var m=$('#main');$('#st').textContent=tok?'● Googleでログイン中':'';
+ if(!cid()){m.innerHTML='<div class="box cid"><div class="msg" style="margin:0">ライフプランのアプリと同じ「クライアントID」を入れてください(このスマホでライフプランのアプリを使っていれば不要です)</div><input id="ci" placeholder="xxxxx.apps.googleusercontent.com"><button class="btn p" id="cis">保存</button></div>';return}
+ if(!tok){m.innerHTML='<div class="bt"><button class="p" id="li">Googleでログイン</button></div>'+(msg?'<div class="msg '+mt+'">'+esc(msg)+'</div>':'');return}
+ if(!data){m.innerHTML='<div class="msg '+mt+'">'+esc(msg)+'</div>'+(mt==='er'?'<div class="bt"><button id="rl">読み込み直す</button></div>':'');return}
+ var L=data.acc||[],a=L.filter(function(x){return x.id===sel})[0],l=a?last(a.id):null,h='';
+ if(a)h+='<div class="box ed"><div class="t">'+esc(a.n||'口座')+' ・ '+esc(own(a.own))+'</div><input id="v" type="text" inputmode="numeric" placeholder="'+(l?Number(l.v).toLocaleString('ja-JP'):'今の残高')+'"><div class="n">'+(l?'前回 '+yen(l.v)+'('+md(l.d)+')':'まだ入力がありません')+'</div><label>記録する日<input id="d" type="date" value="'+ymd(new Date())+'"></label></div>';
+ h+=L.map(function(x){var y=last(x.id);return'<div class="box row'+(x.id===sel?' sel':'')+'" data-id="'+esc(x.id)+'"><div><b>'+esc(x.n||'口座')+'</b><small>'+esc(own(x.own))+(y?' ・ '+md(y.d):'')+'</small></div><div class="v">'+(y?yen(y.v):'—')+'</div></div>'}).join('');
+ h+='<div class="bt"><button id="same">変更なしで記録</button><button class="p" id="ok">記録する</button></div><div class="msg '+mt+'">'+esc(msg||'口座をタップして選び、残高を入れて「記録する」を押してください')+'</div>';
+ m.innerHTML=h;var v=$('#v');if(v)v.addEventListener('input',function(){var t=v.value.replace(/[^\d]/g,'');v.value=t?Number(t).toLocaleString('ja-JP'):''})}
+document.addEventListener('click',function(e){var t=e.target,r;
+ if(t.id==='cis'){var v=$('#ci').value.trim();if(v){try{localStorage.setItem('sdbank.cid',v)}catch(x){}}draw();return}
+ if(t.id==='li'){login().then(load).catch(function(x){msg=x.message;mt='er';draw()});return}
+ if(t.id==='rl'){load();return}
+ if(t.id==='ok'){rec(false);return}if(t.id==='same'){rec(true);return}
+ if(r=t.closest('.row')){sel=r.dataset.id;msg='';draw();var v=$('#v');if(v)v.focus()}});
+draw();
+</script></body></html>
