@@ -1277,6 +1277,7 @@ var ui = { view: 'home', tab: 'basic', livingSel: 0, tableHidden: { living: true
 var drive = { token: null, exp: 0, status: '', statusType: '', lastSync: null, conflict: null, shares: null };
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
+var APP_VERSION = '2026年11月16日';
 var DEFAULT_CASH_RATE = 0.005; // 三菱UFJ銀行の普通預金(2026年11月2日〜)
 // 住宅ローン控除(2026〜2030年入居):[一般の限度額, 子育て等の限度額, 控除期間](万円・年)
 var HL = { newLong: [4500, 5000, 13], newZeh: [3500, 4500, 13], newEco: [2000, 3000, 13], usedHigh: [3500, 4500, 13], usedEco: [2000, 3000, 13], usedOther: [2000, 2000, 10] };
@@ -1872,10 +1873,16 @@ function csvText() {
 
 // ---------- シナリオ比較 ----------
 var LINE_COLORS = ['var(--accent)', 'var(--c-tax)', 'var(--c-ideco)', 'var(--good)', 'var(--bad)', 'var(--c-kid)'];
+// 保存したシナリオは、今の実績残高(起点)と今の計算方法で計算し直して比べる
+function scenarioResult(s) {
+  var inp = clone(s.input);
+  inp.snapshot = clone(D.input.snapshot);
+  return E.simulate(normalize(inp));
+}
 function viewCompare() {
   var sc = D.scenarios;
-  var sets = [{ name: '現在の条件', res: R }].concat(sc.map(function (s) { var res; try { res = E.simulate(s.input); } catch (e) { res = null; } return { name: s.name, res: res, saved: s.savedAt }; })).filter(function (s) { return s.res && s.res.rows.length; });
-  var html = '<div class="head"><div><h1>シナリオ比較</h1><p class="sub">今の前提条件をシナリオとして保存し、総資産の推移を重ねて比べます</p></div></div>';
+  var sets = [{ name: '現在の条件', res: R }].concat(sc.map(function (s) { var res; try { res = scenarioResult(s); } catch (e) { res = null; } return { name: s.name, res: res, saved: s.savedAt }; })).filter(function (s) { return s.res && s.res.rows.length; });
+  var html = '<div class="head"><div><h1>シナリオ比較</h1><p class="sub">今の前提条件をシナリオとして保存し、総資産の推移を重ねて比べます。保存したシナリオは、今の実績残高から計算し直します</p></div></div>';
   html += '<section class="card"><h2>現在の条件を保存</h2><div class="btns" style="align-items:center"><span class="inp sm" style="flex:1 1 220px"><input id="sc-name" aria-label="シナリオの名前" placeholder="例:利回り5%・住宅購入を2年遅らせる"></span><button type="button" class="btn primary" data-act="saveScenario">保存</button></div></section>';
   if (sets.length > 1) {
     html += '<section class="card chart"><div class="head"><h2>総資産の推移</h2><div class="legend">' + sets.map(function (s, i) { return '<span><i style="background:' + LINE_COLORS[i % LINE_COLORS.length] + '"></i>' + esc(s.name) + '</span>'; }).join('') + '</div></div>' + lineChart(sets) + '</section>';
@@ -1886,7 +1893,7 @@ function viewCompare() {
     html += '<div class="tbl-wrap"><table class="data"><thead><tr><th class="l" scope="col">名前</th><th scope="col">65歳時点</th><th scope="col">最終年齢時点</th><th scope="col">最大</th><th class="l" scope="col">保存日時</th><th class="l" scope="col">操作</th></tr></thead><tbody>' +
       '<tr class="mark"><th class="l" scope="row">現在の条件</th><td>' + (R.summary.at65 ? bigYen(R.summary.at65.total) : '—') + '</td><td>' + bigYen(R.summary.end.total) + '</td><td>' + bigYen(R.summary.peak.total) + '</td><td class="l">—</td><td></td></tr>' +
       sc.map(function (s, i) {
-        var res; try { res = E.simulate(s.input); } catch (e) { res = null; }
+        var res; try { res = scenarioResult(s); } catch (e) { res = null; }
         var conf = ui.confirm === 'sc' + i;
         return '<tr><th class="l" scope="row">' + esc(s.name) + '</th><td>' + (res && res.summary.at65 ? bigYen(res.summary.at65.total) : '—') + '</td><td>' + (res ? bigYen(res.summary.end.total) : '—') + '</td><td>' + (res ? bigYen(res.summary.peak.total) : '—') + '</td><td class="l">' + esc(fmtTime(s.savedAt)) + '</td><td class="l"><div class="btns">' +
           (conf ? '<span class="sub" style="margin:0">今の条件を上書きします</span><button type="button" class="btn small primary" data-act="applyScenario" data-arg="' + i + '">読み込む</button><button type="button" class="btn small" data-act="cancelConfirm">やめる</button>'
@@ -1976,6 +1983,7 @@ function viewSync() {
   html += '<p class="hint">入力内容はこのブラウザにも自動で保存しています。</p></section>';
 
   html += '<section class="card"><h2>スマートディスプレイ表示</h2><p class="hint">Fire HD 8 の隠しシートに表示する画面です。このページのアドレスの末尾に <b>#display</b> を付けて開くと表示されます。</p><div class="btns"><a class="btn" href="#display">表示を確認する</a></div></section>';
+  html += '<section class="card"><h2>このアプリの版</h2><p class="calc">' + APP_VERSION + ' 版</p><p class="hint">更新したのに古い版のままのときは、アプリを完全に終了してから開き直してください。</p></section>';
   html += '<section class="card"><h2>初期状態に戻す</h2><p class="hint">架空の見本データに戻します。今の入力内容は消えます(保存したシナリオは残ります)。</p><div class="btns">' +
     (ui.confirm === 'reset' ? '<button type="button" class="btn danger" data-act="reset">見本データに戻す</button><button type="button" class="btn" data-act="cancelConfirm">やめる</button>' : '<button type="button" class="btn" data-act="confirm" data-arg="reset">見本データに戻す</button>') + '</div></section>';
   return html;
