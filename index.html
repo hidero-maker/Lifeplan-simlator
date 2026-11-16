@@ -143,6 +143,7 @@ table.data tr.mark td, table.data tr.mark th { background: var(--accent-soft); }
 .list > .it:first-child { border-top: 0; }
 .it .who { min-width: 76px; font-size: 14px; }
 .it .grow { flex: 1; min-width: 0; }
+.it.ev-row .grow { flex: 1 1 150px; }
 .it .note { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); line-height: 1.4; }
 .it .note.warn { color: var(--warn); }
 .subcard { border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
@@ -264,7 +265,7 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
 
 <script>
 /*
- * ライフプランシミュレーター 計算エンジン v3
+ * ライフプランシミュレーター 計算エンジン v4
  * PC・スマホのブラウザ版とスマートディスプレイの両方で使う共通プログラム。
  * 入力(JSON)を受け取り、1年ごとの収支・口座残高を返す。金額はすべて円。
  *
@@ -280,6 +281,12 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
  * - 預金の利息は、年初と年末の現金の平均 × 預金金利で計算し、税引後(源泉分離課税)の額を収入に加える。
  * - 住宅ローン控除は、年末のローン残高(借入限度額まで)× 控除率を、入居年から控除期間の間、
  *   給与収入がある年の収入に加える。
+ * - 住宅ローンは1か月ずつ計算する。繰上げ返済と金利の変更は、その年の1月に行う想定。
+ * - 繰り返しのイベントは、2回目以降に物価上昇を反映する。
+ * - 教育費は、子供の年齢(西暦 − 生まれ年)が 幼稚園4〜6・小学校7〜12・中学校13〜15・高校16〜18・大学19〜22 の年に、
+ *   今の物価の年額を物価上昇させて支出する。
+ * - 受け取り時の税金(選んだ場合だけ):退職金とiDeCoの一括受取は退職所得として別々に計算し、
+ *   年金は「手取りの割合」を掛ける簡易計算。
  */
 (function (root) {
   'use strict';
@@ -361,6 +368,61 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
     return principal * (f - Math.pow(1 + i, pm)) / (f - 1);
   }
 
+  // 所得税(速算表)
+  function incomeTax(t) {
+    if (t <= 1950000) return t * 0.05;
+    if (t <= 3300000) return t * 0.10 - 97500;
+    if (t <= 6950000) return t * 0.20 - 427500;
+    if (t <= 9000000) return t * 0.23 - 636000;
+    if (t <= 18000000) return t * 0.33 - 1536000;
+    if (t <= 40000000) return t * 0.40 - 2796000;
+    return t * 0.45 - 4796000;
+  }
+  // 退職金・iDeCo一括受取にかかる税金(退職所得。所得税+復興特別所得税+住民税10%)
+  function retirementTax(amount, years) {
+    const y = Math.max(1, Math.ceil((Number(years) || 0) - 1e-9));
+    const ded = y <= 20 ? Math.max(800000, 400000 * y) : 8000000 + 700000 * (y - 20);
+    const t = Math.floor(Math.max(0, amount - ded) / 2 / 1000) * 1000;
+    if (t <= 0) return 0;
+    return incomeTax(t) * 1.021 + t * 0.10;
+  }
+
+  // 教育費の目安(年額・円)。幼稚園〜高校は文部科学省「子供の学習費調査」(令和5年度)の学習費総額
+  // (学校外の塾や習い事を含む)。大学は授業料+施設設備費の年額と、入学料
+  // (国立は標準額、私立は文部科学省の令和7年度入学者の調査の平均)。
+  const EDU = {
+    k: { public: 184646, private: 347338 },
+    e: { public: 336265, private: 1828112 },
+    j: { public: 542475, private: 1560359 },
+    h: { public: 597752, private: 1030283 },
+    u: { national: [535800, 282000], privArts: [992284, 219951], privSci: [1356691, 245362] },
+  };
+  const EDU_AGES = { k: [4, 6], e: [7, 12], j: [13, 15], h: [16, 18], u: [19, 22] };
+  // その年齢の教育費(今の物価の年額)
+  function educationCost(edu, age) {
+    if (!edu) return 0;
+    for (const st of ['k', 'e', 'j', 'h', 'u']) {
+      const rg = EDU_AGES[st];
+      if (age < rg[0] || age > rg[1]) continue;
+      const v = EDU[st][edu[st]];
+      if (v == null) return 0;
+      if (st === 'u') return v[0] + (age === rg[0] ? v[1] : 0);
+      return v;
+    }
+    return 0;
+  }
+
+  // イベントがその年に発生するか(every 年ごとの繰り返しに対応)
+  function eventHits(ev, year) {
+    const y0 = Number(ev.year);
+    if (y0 === year) return true;
+    const every = Math.round(Number(ev.every) || 0);
+    if (every <= 0 || year < y0 || (year - y0) % every !== 0) return false;
+    return ev.until == null || ev.until === '' || year <= Number(ev.until);
+  }
+
+  function wdMode(input) { return (input.withdraw && input.withdraw.mode) || 'fixed'; }
+
   function simulate(input) {
     const h = input.household;
     const a = input.assumptions;
@@ -389,13 +451,56 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
     });
     const idecos = (input.ideco || []).map((d, idx) => {
       const k = (s.ideco && s.ideco[idx]) || { balance: 0, principal: 0 };
-      return Object.assign({}, d, { balance: k.balance || 0, principal: k.principal || 0, received: false });
+      return Object.assign({}, d, { balance: k.balance || 0, principal: k.principal || 0, received: false, joined: Number(d.pastYears) || 0 });
     });
     const accounts = { taxable, parentNisa: parent };
 
     const hs = input.housing || { enabled: false };
     const loanAmount = hs.enabled ? Math.max(0, hs.price - hs.downPayment) : 0;
     const loanMonthly = hs.enabled ? monthlyLoanPayment(loanAmount, hs.rate, hs.years) : 0;
+
+    // 住宅ローンの返済予定(1か月ずつ計算。繰上げ返済と金利の変更は、その年の1月に行う想定)
+    const loanPlan = {}; // 年 → { pay: その年の返済額, prepay: 繰上げ返済額, balance: 年末残高 }
+    let loanPayoffYear = null;
+    if (hs.enabled && loanAmount > 0 && isFinite(Number(hs.purchaseYear))) {
+      let bal = loanAmount, rate = Number(hs.rate) || 0, remaining = Math.round(hs.years * 12), monthly = loanMonthly;
+      const monthsToPayoff = () => {
+        const i = rate / 12;
+        if (monthly <= 0) return remaining;
+        if (i === 0) return Math.ceil(bal / monthly - 1e-9);
+        const x = 1 - bal * i / monthly;
+        return x <= 0 ? remaining : Math.ceil(-Math.log(x) / Math.log(1 + i) - 1e-9);
+      };
+      for (let y = Number(hs.purchaseYear); y <= endYear; y++) {
+        let pay = 0, prepay = 0;
+        (hs.rateChanges || []).forEach((c) => {
+          if (Number(c.year) !== y || bal <= 0.5 || c.rate == null || Number(c.rate) === rate) return;
+          rate = Number(c.rate) || 0;
+          monthly = monthlyLoanPayment(bal, rate, remaining / 12);
+        });
+        (hs.prepayments || []).forEach((p) => {
+          if (Number(p.year) !== y || bal <= 0.5) return;
+          const amt = Math.min(Math.max(0, Number(p.amount) || 0), bal);
+          if (amt <= 0) return;
+          bal -= amt;
+          if (y >= startYear) prepay += amt;   // 起点より前の繰上げ返済は、残高だけに反映する
+          if (p.type === 'payment') monthly = monthlyLoanPayment(bal, rate, remaining / 12); // 毎月の返済を減らす
+          else remaining = Math.min(remaining, monthsToPayoff());                              // 期間を短くする
+        });
+        for (let m = 1; m <= 12; m++) {
+          if (bal <= 0.5 || remaining <= 0) break;
+          const interest = bal * rate / 12;
+          const pmt = Math.min(monthly, bal + interest);
+          bal = bal + interest - pmt; remaining--;
+          if (y > startYear || (y === startYear && m > startMonth)) pay += pmt;
+        }
+        if (bal <= 0.5 || remaining <= 0) { bal = 0; if (loanPayoffYear == null) loanPayoffYear = y; }
+        loanPlan[y] = { pay, prepay, balance: bal };
+      }
+    }
+    const rt = a.receiptTax && a.receiptTax.enabled ? a.receiptTax : null;
+    const pensionNet = rt ? (rt.pensionNetRate != null ? Number(rt.pensionNetRate) : 0.9) : 1;
+    const shortfallMode = wdMode(input) === 'shortfall';
 
     const inv = input.invest;
     const wd = input.withdraw || {};
@@ -411,7 +516,6 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
       childNisaTotal: kids0, taxable: taxable.balance, ideco: ideco0,
       total: cash.v + parent.balance + taxable.balance + kids0 + ideco0,
     };
-    let loanPaidMonths = 0;
 
     for (let year = startYear; year <= endYear; year++) {
       const headAge = year - h.headBirthYear;
@@ -425,7 +529,7 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
       const cashBegin = cash.v;
 
       // 1. 収入(給与・退職金・年金・児童手当)
-      let salary = 0, bonus = 0;
+      let salary = 0, bonus = 0, bonusTax = 0;
       const salaryOf = { head: 0, spouse: 0 };
       if (inc.persons) {
         inc.persons.forEach((p) => {
@@ -435,7 +539,10 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
             const v = interpolate(p.points, age) * frac;
             salary += v; salaryOf[p.who === 'spouse' ? 'spouse' : 'head'] += v;
           }
-          if (p.retirementBonus && age === p.lastWorkAge + 1) bonus += p.retirementBonus;
+          if (p.retirementBonus && age === p.lastWorkAge + 1) {
+            bonus += p.retirementBonus;
+            if (rt) bonusTax += retirementTax(p.retirementBonus, p.serviceYears != null ? p.serviceYears : 38);
+          }
         });
       } else if (headAge <= inc.lastWorkAge) {
         salary = interpolate(inc.points, headAge) * frac; salaryOf.head = salary;
@@ -443,8 +550,9 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
       let pension = 0;
       (inc.pensions || []).forEach((p) => {
         const age = ageOf(p.who);
-        if (age != null && age >= p.startAge) pension += p.annual * frac;
+        if (age != null && age >= p.startAge) pension += p.annual * frac * (a.pensionIndexed ? infl : 1);
       });
+      const pensionTax = pension * (1 - pensionNet);
       let childAllowance = 0;
       if (!input.childAllowance || input.childAllowance.enabled !== false) {
         children.forEach((c, idx) => { childAllowance += childAllowanceFor(children, idx, year) * frac; });
@@ -465,32 +573,34 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
       });
       if (bought && hs.maintenance) living += hs.maintenance * infl * frac;
 
+      // 2b. 教育費(子供ごとの進路から計算)
+      let education = 0;
+      children.forEach((c) => { education += educationCost(c.edu, year - c.birthYear) * infl * frac; });
+
       // 3. 住宅費
       let housingCost = 0;
       if (hs.enabled) {
         if (year === hs.purchaseYear) housingCost += hs.downPayment + (hs.costs || 0);
-        // 返済は購入年から返済期間の間(起点より前に返済した分も経過として数える)
-        const totalMonths = Math.round(hs.years * 12);
-        if (year >= hs.purchaseYear) {
-          if (year === startYear) loanPaidMonths = Math.min(totalMonths, Math.max(0, (year - hs.purchaseYear) * 12 + startMonth));
-          const pay = Math.max(0, Math.min(Math.round(12 * frac), totalMonths - loanPaidMonths));
-          housingCost += loanMonthly * pay;
-          loanPaidMonths += pay;
-        }
       }
-      const loanBalance = hs.enabled && year >= hs.purchaseYear ? loanBalanceAfter(loanAmount, hs.rate, hs.years, loanPaidMonths) : 0;
+      // 返済は購入年から(起点より前に返済した分も経過として数える)
+      const lp = loanPlan[year];
+      const prepay = lp ? lp.prepay : 0;
+      if (lp) housingCost += lp.pay + lp.prepay;
+      const loanBalance = lp ? lp.balance : 0;
 
       // 4. イベント(プラスは支出、マイナスは収入)
       let eventCost = 0;
       const eventNames = [];
       (input.events || []).forEach((ev) => {
-        if (Number(ev.year) !== year) return;
-        if (ev.amount >= 0) eventCost += ev.amount; else eventIncome += -ev.amount;
+        if (!eventHits(ev, year)) return;
+        // 繰り返しの2回目以降は物価上昇を反映する
+        const amt = (Number(ev.amount) || 0) * (Number(ev.every) > 0 ? Math.pow(1 + a.inflation, year - Number(ev.year)) : 1);
+        if (amt >= 0) eventCost += amt; else eventIncome += -amt;
         eventNames.push(ev.name);
       });
 
       // 5. iDeCo(掛金は現金から、節税額は収入に加える。受取年に一括で現金へ)
-      let idecoIn = 0, taxSaving = 0, idecoReceive = 0;
+      let idecoIn = 0, taxSaving = 0, idecoReceive = 0, idecoTax = 0;
       const idecoContrib = idecos.map((d) => {
         const age = ageOf(d.who);
         if (age == null || d.received) return 0;
@@ -498,6 +608,7 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
         if (age >= d.endAge || age >= d.receiveAge) return 0;
         const c = (d.monthly || 0) * 12 * frac;
         idecoIn += c;
+        if (c > 0) d.joined += frac;
         // 節税できるのは、本人に給与収入がある年だけ
         if (salaryOf[d.who === 'spouse' ? 'spouse' : 'head'] > 0) taxSaving += c * (d.taxSavingRate || 0);
         return c;
@@ -512,13 +623,13 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
         if (Number(ld.maxPerYear) > 0) loanDeduction = Math.min(loanDeduction, Number(ld.maxPerYear));
       }
 
-      const incomeBase = salary + bonus + pension + childAllowance + eventIncome + taxSaving + loanDeduction;
-      const expense = living + housingCost + eventCost;
+      const incomeBase = salary + bonus + pension + childAllowance + eventIncome + taxSaving + loanDeduction - bonusTax - pensionTax;
+      const expense = living + education + housingCost + eventCost;
       cash.v += incomeBase - expense - idecoIn;
 
       // 9. 計画的な取り崩し(年の途中に売る想定:その時点の値段で売却する)
       let plannedWithdraw = 0, withdrawTax = 0, nisaFreed = 0;
-      if (wd.startHeadAge != null && headAge >= wd.startHeadAge && wd.monthly > 0) {
+      if (!shortfallMode && wd.startHeadAge != null && headAge >= wd.startHeadAge && wd.monthly > 0) {
         let need = wd.monthly * 12 * frac * (wd.inflate ? infl : 1);
         for (const key of wd.order || ['taxable', 'parentNisa']) {
           if (need <= 0) break;
@@ -571,7 +682,9 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
         d.principal += idecoContrib[idx];
         const age = ageOf(d.who);
         if (!d.received && age != null && age >= d.receiveAge && d.balance > 0) {
-          idecoReceive += d.balance;
+          const tx = rt ? Math.min(d.balance, retirementTax(d.balance, d.joined)) : 0;
+          idecoTax += tx;
+          idecoReceive += d.balance - tx;
           d.balance = 0; d.principal = 0; d.received = true;
         }
       });
@@ -579,7 +692,7 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
 
       // 10. 現金不足時の追加売却(子NISAは保持)
       let emergency = 0;
-      if (wd.emergency !== false && cash.v < reserve) {
+      if ((wd.emergency !== false || shortfallMode) && cash.v < reserve) {
         let need = reserve - cash.v;
         for (const key of wd.order || ['taxable', 'parentNisa']) {
           if (need <= 0) break;
@@ -608,10 +721,11 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
       const reduced = planned - investable > 1;
 
       rows.push({
-        year, headAge, spouseAge, fraction: frac, loanBalance,
+        year, headAge, spouseAge, fraction: frac, loanBalance, prepay,
         childAges: kids.map((k) => year - k.birthYear),
         salary, bonus, pension, childAllowance, eventIncome, taxSaving, loanDeduction, cashInterest, income,
-        living, livingByItem, housingCost, eventCost, eventNames, expense, net,
+        bonusTax, pensionTax, idecoTax, receiptTax: bonusTax + pensionTax + idecoTax,
+        living, livingByItem, education, housingCost, eventCost, eventNames, expense, net,
         plannedInvest: planned, invested, reduced, parentIn: pIn, childIn: kidIn, taxableIn: tIn,
         idecoIn, idecoReceive, ideco: idecoTotal,
         plannedWithdraw, emergency, withdrawTax,
@@ -635,7 +749,7 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
 
     return {
       rows,
-      loan: { amount: loanAmount, monthly: loanMonthly, annual: loanMonthly * 12 },
+      loan: { amount: loanAmount, monthly: loanMonthly, annual: loanMonthly * 12, payoffYear: loanPayoffYear },
       start,
       summary: {
         now: rows[0],
@@ -645,12 +759,14 @@ textarea.json { width: 100%; min-height: 140px; box-sizing: border-box; border: 
         parentNisaFilledYear: (rows.find((x) => x.parentPrincipal >= inv.parentNisa.lifetimeCap - 1) || {}).year || null,
         reducedYears,
         taxableGoneYear: taxableGone ? taxableGone.year : null,
+        depletedYear: depletedIdx >= 0 ? rows[depletedIdx].year : null,
+        depletedAge: depletedIdx >= 0 ? rows[depletedIdx].headAge : null,
       },
       warnings,
     };
   }
 
-  const api = { simulate, monthlyLoanPayment, loanBalanceAfter, interpolate, childAllowanceFor };
+  const api = { simulate, monthlyLoanPayment, loanBalanceAfter, interpolate, childAllowanceFor, retirementTax, educationCost, eventHits, EDU, EDU_AGES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.LifePlanEngine = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -1271,13 +1387,14 @@ var DRIVE_FILE = 'lifeplan.json';
 
 // ---------- 状態 ----------
 var D = null;            // { input, scenarios, settings, savedAt }
-var R = null;            // 計算結果
+var R = null;            // 計算結果(表示用。「今の物価に換算」のときは換算後)
+var RN = null;           // 計算結果(将来の金額のまま)
 var baseline = null;     // 開いた時点の結果(変更前との差の表示用)
 var ui = { view: 'home', tab: 'basic', livingSel: 0, tableHidden: { living: true, detail: true }, investShowAll: false, confirm: null, bulk: null };
 var drive = { token: null, exp: 0, status: '', statusType: '', lastSync: null, conflict: null, shares: null };
 
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
-var APP_VERSION = '2026年11月16日';
+var APP_VERSION = '2026年11月17日';
 var DEFAULT_CASH_RATE = 0.005; // 三菱UFJ銀行の普通預金(2026年11月2日〜)
 // 住宅ローン控除(2026〜2030年入居):[一般の限度額, 子育て等の限度額, 控除期間](万円・年)
 var HL = { newLong: [4500, 5000, 13], newZeh: [3500, 4500, 13], newEco: [2000, 3000, 13], usedHigh: [3500, 4500, 13], usedEco: [2000, 3000, 13], usedOther: [2000, 2000, 10] };
@@ -1322,9 +1439,17 @@ function normalize(inp) {
   inp.events = inp.events || [];
   inp.invest.byYear = inp.invest.byYear || {};
   if (inp.assumptions.cashRate == null) inp.assumptions.cashRate = DEFAULT_CASH_RATE;
+  if (inp.assumptions.returnSpread == null) inp.assumptions.returnSpread = 0.02;
+  var rt = inp.assumptions.receiptTax = inp.assumptions.receiptTax || { enabled: false };
+  if (rt.pensionNetRate == null) rt.pensionNetRate = 0.9;
+  inp.withdraw = inp.withdraw || {};
+  if (inp.withdraw.mode !== 'shortfall') inp.withdraw.mode = 'fixed';
+  if (inp.housing) { inp.housing.prepayments = inp.housing.prepayments || []; inp.housing.rateChanges = inp.housing.rateChanges || []; }
   applyDeduction(inp);
   inp.income.persons = inp.income.persons || [];
   inp.income.pensions = inp.income.pensions || [];
+  inp.income.persons.forEach(function (p) { if (p.serviceYears == null) p.serviceYears = Math.max(1, (Number(p.lastWorkAge) || 60) - 22); });
+  inp.events.forEach(function (e) { if (!(Number(e.every) > 0)) { delete e.every; delete e.until; } });
   if (!inp.livingAges) {
     var first = (inp.expenses[0] && inp.expenses[0].points) || [];
     inp.livingAges = first.length ? first.map(function (p) { return p.age; }) : [36, 41, 46, 51, 56, 61, 66, 71, 76];
@@ -1343,9 +1468,40 @@ function normalize(inp) {
 }
 
 function recompute() {
-  try { R = E.simulate(D.input); R.error = null; }
-  catch (e) { R = R || { rows: [], summary: {}, warnings: [], loan: {} }; R.error = '計算できませんでした:' + e.message; }
+  try { RN = E.simulate(D.input); R = D.settings && D.settings.real ? deflate(RN, D.input) : RN; R.error = null; }
+  catch (e) { R = R || { rows: [], summary: {}, warnings: [], loan: {} }; RN = RN || R; R.error = '計算できませんでした:' + e.message; }
 }
+// 将来の金額を、起点の年の物価に直す(インフレ率で割り戻す)
+function deflate(res, inp) {
+  var inf = Number(inp.assumptions.inflation) || 0, y0 = res.start.year;
+  var keep = { year: 1, headAge: 1, spouseAge: 1, fraction: 1, childAges: 1 };
+  var rows = res.rows.map(function (r) {
+    var k = 1 / Math.pow(1 + inf, r.year - y0), o = {};
+    Object.keys(r).forEach(function (key) {
+      var v = r[key];
+      if (keep[key]) o[key] = v;
+      else if (typeof v === 'number') o[key] = v * k;
+      else if (Array.isArray(v)) o[key] = v.map(function (x) { return typeof x === 'number' ? x * k : x; });
+      else if (v && typeof v === 'object') { var m = {}; Object.keys(v).forEach(function (q) { m[q] = v[q] * k; }); o[key] = m; }
+      else o[key] = v;
+    });
+    return o;
+  });
+  var sm = {}; Object.keys(res.summary).forEach(function (k) { sm[k] = res.summary[k]; });
+  sm.now = rows[0]; sm.end = rows[rows.length - 1];
+  sm.at65 = rows.find(function (x) { return x.headAge === 65; }) || null;
+  sm.peak = rows.reduce(function (m, x) { return x.total > m.total ? x : m; }, rows[0]);
+  return { rows: rows, loan: res.loan, start: res.start, warnings: res.warnings, summary: sm, real: true };
+}
+function isReal() { return !!(D.settings && D.settings.real); }
+function realToggle() {
+  var on = isReal();
+  return '<div class="toggles"><span class="sub" style="margin:0">金額の表示</span>' +
+    '<button type="button" class="toggle" aria-pressed="' + !on + '" data-act="setReal" data-arg="0">将来の金額のまま</button>' +
+    '<button type="button" class="toggle" aria-pressed="' + on + '" data-act="setReal" data-arg="1">今の物価に換算</button>' +
+    (on ? '<span class="sub" style="margin:0">' + R.start.year + '年の物価に直した金額です(インフレ率 年' + pc(D.input.assumptions.inflation) + '%で割り戻し)</span>' : '') + '</div>';
+}
+function pc(v) { return Math.round((Number(v) || 0) * 100000) / 1000; }
 
 // ---------- 書式 ----------
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -1497,6 +1653,34 @@ function stackChart(rows, opts) {
   out += '<line class="axis" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + (T + ih) + '" y2="' + (T + ih) + '"></line></svg>';
   return out;
 }
+// 折れ線グラフ。series: [{ name, color, dash, pts: [[年, 金額], ...] }]
+function seriesChart(series, opts) {
+  opts = opts || {};
+  // 幅の狭い場所(スマホ、2列のカード)では、文字が小さくなりすぎないように図の横幅を詰める
+  var W = opts.w || (window.innerWidth < 700 ? 560 : 1000), H = opts.h || 300, L = 64, B = 40, T = 12, Rr = 12, ih = H - B - T, iw = W - L - Rr;
+  var all = []; series.forEach(function (s) { s.pts.forEach(function (p) { all.push(p); }); });
+  if (!all.length) return '';
+  var y0 = Math.min.apply(null, all.map(function (p) { return p[0]; })), y1 = Math.max.apply(null, all.map(function (p) { return p[0]; }));
+  var maxV = Math.max(0, Math.max.apply(null, all.map(function (p) { return p[1]; }))), minV = Math.min(0, Math.min.apply(null, all.map(function (p) { return p[1]; })));
+  var nm = niceMax(Math.max(maxV, -minV));
+  var top = Math.max(nm.step, Math.ceil(maxV / nm.step - 1e-9) * nm.step), bot = Math.floor(minV / nm.step + 1e-9) * nm.step;
+  var X = function (y) { return L + (y - y0) / Math.max(1, y1 - y0) * iw; }, Y = function (v) { return T + ih - (Math.max(bot, v) - bot) / (top - bot) * ih; };
+  var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(opts.label || '推移のグラフ') + '">';
+  for (var t = bot; t <= top + 1; t += nm.step) out += '<line class="grid" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(t) + '" y2="' + Y(t) + '"></line><text class="tick" x="' + (L - 8) + '" y="' + (Y(t) + 4) + '" text-anchor="end">' + (t < 0 ? '−' + tickLabel(-t) : tickLabel(t)) + '</text>';
+  var hb = D.input.household.headBirthYear;
+  for (var y = y0; y <= y1; y++) if ((y - y0) % 10 === 0) out += '<text class="tick" x="' + X(y) + '" y="' + (H - B + 16) + '" text-anchor="middle">' + y + '</text><text class="tick" x="' + X(y) + '" y="' + (H - B + 32) + '" text-anchor="middle">' + (y - hb) + '歳</text>';
+  out += '<line class="axis" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(0) + '" y2="' + Y(0) + '"></line>';
+  series.forEach(function (s, i) {
+    var d = s.pts.map(function (p, k) { return (k ? 'L' : 'M') + X(p[0]).toFixed(1) + ' ' + Y(p[1]).toFixed(1); }).join(' ');
+    out += '<path d="' + d + '" style="fill:none;stroke:' + s.color + '" stroke-width="' + (s.dash ? 2 : 3) + '"' + (s.dash ? ' stroke-dasharray="6 4"' : '') + '><title>' + esc(s.name) + '</title></path>';
+    var last = s.pts[s.pts.length - 1];
+    out += '<circle cx="' + X(last[0]) + '" cy="' + Y(last[1]) + '" r="4" style="fill:' + s.color + '"></circle>';
+  });
+  return out + '</svg>';
+}
+function seriesLegend(series) {
+  return '<div class="legend">' + series.map(function (s) { return '<span><i style="background:' + s.color + '"></i>' + esc(s.name) + '</span>'; }).join('') + '</div>';
+}
 function legendHtml() {
   return '<div class="legend">' + SERIES.map(function (s) { return '<span><i style="background:' + s.color + '"></i>' + s.name + '</span>'; }).join('') + '</div>';
 }
@@ -1522,7 +1706,8 @@ function insightText() {
   var s = R.summary, inp = D.input, parts = [];
   if (s.peak) parts.push('資産は' + s.peak.year + '年(' + s.peak.headAge + '歳)の約' + bigYen(s.peak.total) + 'が最大です。');
   var wd = inp.withdraw || {};
-  if (wd.startHeadAge != null && wd.monthly > 0) parts.push(wd.startHeadAge + '歳から月' + n0(wd.monthly / 1e4) + '万円を取り崩します。');
+  if (wd.mode === 'shortfall') parts.push('現金が足りなくなった分だけ、運用資産を取り崩します。');
+  else if (wd.startHeadAge != null && wd.monthly > 0) parts.push(wd.startHeadAge + '歳から月' + n0(wd.monthly / 1e4) + '万円を取り崩します。');
   if (s.taxableGoneYear) { var g = R.rows.find(function (r) { return r.year === s.taxableGoneYear; }); parts.push('特定口座は' + g.year + '年(' + g.headAge + '歳)で使い切り、その後は親NISAから取り崩します。'); }
   if (s.reducedYears && s.reducedYears.length) {
     var ys = s.reducedYears; var txt = ys.length > 3 ? ys[0] + '〜' + ys[ys.length - 1] + '年のうち' + ys.length + '年' : ys.join('・') + '年';
@@ -1532,10 +1717,115 @@ function insightText() {
 }
 function upcoming(inp) {
   inp = inp || D.input; var start = inp.snapshot.year, list = [];
-  inp.events.forEach(function (e) { if (Number(e.year) >= start) list.push({ year: Number(e.year), name: e.name, amount: e.amount }); });
+  inp.events.forEach(function (e) {
+    var y = Number(e.year), ev = Math.round(Number(e.every) || 0);
+    if (!isFinite(y)) return;
+    if (ev > 0) while (y < start) y += ev;
+    if (y < start || (ev > 0 && e.until != null && e.until !== '' && y > Number(e.until))) return;
+    list.push({ year: y, name: e.name + (ev > 0 ? '(' + ev + '年ごと)' : ''), amount: e.amount * (ev > 0 ? Math.pow(1 + (Number(inp.assumptions.inflation) || 0), y - Number(e.year)) : 1) });
+  });
   if (inp.housing && inp.housing.enabled && inp.housing.purchaseYear >= start) list.push({ year: inp.housing.purchaseYear, name: '住宅購入(頭金・諸経費)', amount: inp.housing.downPayment + (inp.housing.costs || 0) });
   list.sort(function (a, b) { return a.year - b.year; });
   return list.slice(0, 6);
+}
+// 100歳まで計算したとき、取り崩せる資産が何歳で尽きるか
+function lifeInfo(inp) {
+  var z = clone(inp); z.endHeadAge = Math.max(100, inp.endHeadAge || 80);
+  try {
+    var res = E.simulate(z), cs = res.warnings.find(function (w) { return w.type === 'cashShort'; });
+    return { endAge: z.endHeadAge, age: res.summary.depletedAge, year: res.summary.depletedYear, shortAge: cs ? cs.headAge : null, shortYear: cs ? cs.year : null };
+  } catch (e) { return null; }
+}
+function lifeKpi() {
+  var li = lifeInfo(D.input); if (!li) return '';
+  if (li.age != null) return kpi('資産が持つ年齢', li.age + '<small> 歳で尽きる</small>', li.year + '年に、取り崩せる資産(現金・親NISA・特定口座)がなくなります');
+  if (li.shortAge != null) return kpi('資産が持つ年齢', li.shortAge + '<small> 歳で現金不足</small>', li.shortYear + '年に現金がマイナスになります');
+  return kpi('資産が持つ年齢', li.endAge + '<small> 歳まで持つ</small>', li.endAge + '歳まで計算しても、取り崩せる資産が残ります');
+}
+// 利回りを上下させた場合
+function rangeData() {
+  var inp = D.input, a = inp.assumptions, sp = Number(a.returnSpread) || 0;
+  if (sp <= 0) return null;
+  var endAge = inp.endHeadAge || 80;
+  return [['悲観', a.returnRate - sp, 'var(--bad)', 1], ['標準', a.returnRate, 'var(--accent)', 0], ['楽観', a.returnRate + sp, 'var(--good)', 1]].map(function (p) {
+    var z = clone(inp); z.assumptions.returnRate = p[1]; z.endHeadAge = Math.max(100, endAge);
+    var res; try { res = E.simulate(z); } catch (e) { return null; }
+    var dep = res.summary.depletedAge;
+    if (isReal()) res = deflate(res, z);
+    var rows = res.rows.filter(function (r) { return r.headAge <= endAge; });
+    if (!rows.length) return null;
+    return { name: p[0], rate: p[1], color: p[2], dash: p[3], rows: rows, at65: rows.find(function (r) { return r.headAge === 65; }), end: rows[rows.length - 1], dep: dep, lifeEnd: z.endHeadAge };
+  }).filter(Boolean);
+}
+function rangeCard() {
+  var rd = rangeData(); if (!rd || rd.length < 3) return '';
+  var series = rd.map(function (d) { return { name: d.name + '(年' + pc(d.rate) + '%)', color: d.color, dash: d.dash, pts: d.rows.map(function (r) { return [r.year, r.total]; }) }; });
+  return '<section class="card chart"><div class="head"><h2>利回りが変わった場合</h2>' + seriesLegend(series) + '</div>' + seriesChart(series, { label: '利回りごとの総資産の推移' }) +
+    '<div class="tbl-wrap"><table class="data"><thead><tr><th class="l" scope="col">想定</th><th scope="col">利回り</th><th scope="col">65歳時点</th><th scope="col">' + rd[0].end.headAge + '歳時点</th><th scope="col">資産が持つ年齢</th></tr></thead><tbody>' +
+    rd.map(function (d) { return '<tr' + (d.dash ? '' : ' class="mark"') + '><th class="l" scope="row">' + d.name + '</th><td>年' + pc(d.rate) + '%</td><td>' + (d.at65 ? bigYen(d.at65.total) : '—') + '</td><td>' + bigYen(d.end.total) + '</td><td>' + (d.dep != null ? d.dep + '歳で尽きる' : d.lifeEnd + '歳まで持つ') + '</td></tr>'; }).join('') +
+    '</tbody></table></div><p class="hint">利回りだけを上下させた結果です。上下させる幅は「前提条件」の「基本」にある「利回りの幅」で変えられます。資産が持つ年齢は100歳まで計算した結果です。</p></section>';
+}
+// 収入と支出、現金とローン残高
+function flowCards() {
+  var rows = R.rows, pts = function (f) { return rows.map(function (r) { return [r.year, f(r)]; }); };
+  var s1 = [{ name: '収入', color: 'var(--good)', pts: pts(function (r) { return r.income; }) }, { name: '支出', color: 'var(--bad)', pts: pts(function (r) { return r.expense; }) }];
+  var def = rows.filter(function (r) { return r.net < -5000; });
+  var hasLoan = rows.some(function (r) { return r.loanBalance > 0; });
+  var s2 = hasLoan ? [{ name: '純資産(総資産−ローン残高)', color: 'var(--accent)', pts: pts(function (r) { return r.total - r.loanBalance; }) }, { name: '現金', color: 'var(--c-cash)', dash: 1, pts: pts(function (r) { return r.cash; }) }, { name: 'ローン残高', color: 'var(--c-tax)', dash: 1, pts: pts(function (r) { return r.loanBalance; }) }]
+    : [{ name: '現金', color: 'var(--accent)', pts: pts(function (r) { return r.cash; }) }];
+  var payoff = RN.loan && RN.loan.payoffYear;
+  return '<div class="row"><section class="card chart" style="flex:1 1 420px;min-width:0"><div class="head"><h2>収入と支出(年ごと)</h2>' + seriesLegend(s1) + '</div>' + seriesChart(s1, { label: '年ごとの収入と支出', w: 560 }) +
+    '<p class="insight">' + (def.length ? '支出が収入を上回る年は' + def.length + '年あります(最初は' + def[0].year + '年・' + def[0].headAge + '歳)。' : '支出が収入を上回る年はありません。') + '支出に積立額は含みません。</p></section>' +
+    '<section class="card chart" style="flex:1 1 420px;min-width:0"><div class="head"><h2>' + (hasLoan ? '現金とローン残高' : '現金の推移') + '</h2>' + seriesLegend(s2) + '</div>' + seriesChart(s2, { label: hasLoan ? '現金・ローン残高・純資産の推移' : '現金の推移', w: 560 }) +
+    '<p class="insight">' + (hasLoan ? '純資産は、金融資産の合計からローン残高を引いた額です(住宅の価値は含みません)。' + (payoff ? 'ローンは' + payoff + '年(' + (payoff - D.input.household.headBirthYear) + '歳)に完済する予定です。' : '') : '各年の年末時点の現金です。') + '</p></section></div>';
+}
+// 積立を減らした年
+function reducedCard() {
+  var list = R.rows.filter(function (r) { return r.reduced; });
+  if (!list.length) return '';
+  return '<section class="card"><div class="head"><h2>積立を減らした年</h2><span class="sub">現金が生活防衛資金を下回るため、予定より減らした年(' + list.length + '年分)</span></div><div class="tbl-wrap" style="max-height:320px"><table class="data"><thead><tr><th class="l" scope="col">年</th><th scope="col">予定の積立</th><th scope="col">実際の積立</th><th scope="col">減らした額</th><th scope="col">年末の現金(万円)</th></tr></thead><tbody>' +
+    list.map(function (r) { return '<tr><th class="l" scope="row">' + r.year + '年<span class="sub" style="margin:0"> ・ ' + r.headAge + '歳</span></th><td>' + manTxt(r.plannedInvest) + '</td><td>' + manTxt(r.invested) + '</td><td class="neg">' + manTxt(r.invested - r.plannedInvest) + '</td><td>' + manTxt(r.cash) + '</td></tr>'; }).join('') +
+    '</tbody></table></div><p class="hint">積立額や生活防衛資金は「前提条件」の「積立・取り崩し」で見直せます。</p></section>';
+}
+// 桁や単位の入れ間違いを見つける
+function sanity(inp) {
+  var out = [], a = inp.assumptions, add = function (m) { if (out.indexOf(m) < 0) out.push(m); };
+  var big = function (v, lim) { return Math.abs(Number(v) || 0) > lim; };
+  if (big(a.returnRate, 0.15)) add('想定利回りが年' + pc(a.returnRate) + '%');
+  if (big(a.inflation, 0.1)) add('インフレ率が年' + pc(a.inflation) + '%');
+  if (big(a.cashRate, 0.05)) add('預金の金利が年' + pc(a.cashRate) + '%');
+  inp.income.persons.forEach(function (p) {
+    var b = (p.points || []).find(function (pt) { return big(pt.amount, 1e8); });
+    if (b) add(personName(p.who) + 'の手取り(' + b.age + '歳)が年' + bigYen(b.amount));
+    if (big(p.retirementBonus, 3e8)) add(personName(p.who) + 'の退職金が' + bigYen(p.retirementBonus));
+  });
+  inp.income.pensions.forEach(function (p) { if (big(p.annual, 1e7)) add(personName(p.who) + 'の年金が年' + bigYen(p.annual)); });
+  inp.expenses.forEach(function (e) {
+    var lim = e.unit === 'year' ? 12e6 : 1e6;
+    var b = (e.points || []).find(function (pt) { return big(pt.amount, lim); });
+    if (b) add('生活費「' + e.name + '」(' + b.age + '歳)が' + (e.unit === 'year' ? '年' : '月') + bigYen(b.amount));
+  });
+  var hs = inp.housing;
+  if (hs && hs.enabled) {
+    if (big(hs.price, 1e9)) add('物件価格が' + bigYen(hs.price));
+    if (hs.downPayment > hs.price) add('頭金が物件価格より大きい');
+    if (big(hs.rate, 0.1)) add('ローン金利が年' + pc(hs.rate) + '%');
+    if (big(hs.maintenance, 1e7)) add('住宅の維持費が年' + bigYen(hs.maintenance));
+    (hs.rateChanges || []).forEach(function (c) { if (big(c.rate, 0.1)) add(c.year + '年からのローン金利が年' + pc(c.rate) + '%'); });
+  }
+  Object.keys(inp.invest.byYear || {}).some(function (y) { if (big(inp.invest.byYear[y], 5e7)) { add(y + '年の積立額が' + bigYen(inp.invest.byYear[y])); return true; } return false; });
+  if (big(inp.withdraw.monthly, 3e6)) add('毎月の取り崩し額が' + bigYen(inp.withdraw.monthly));
+  if (big(inp.withdraw.reserve, 3e8)) add('生活防衛資金が' + bigYen(inp.withdraw.reserve));
+  inp.events.forEach(function (e) { if (big(e.amount, 5e8)) add('ライフイベント「' + e.name + '」が' + bigYen(Math.abs(e.amount))); });
+  inp.ideco.forEach(function (d) { if (big(d.monthly, 1e5)) add(personName(d.who) + 'のiDeCo掛金が月' + bigYen(d.monthly)); });
+  var sn = inp.snapshot;
+  [['現金・預貯金', sn.cash], ['親NISAの残高', sn.parentNisa.balance], ['特定口座の残高', sn.taxable.balance]].forEach(function (p) { if (big(p[1], 1e10)) add(p[0] + 'が' + bigYen(p[1])); });
+  if (sn.parentNisa.principal > (inp.invest.parentNisa.lifetimeCap || 0) + 1) add('親NISAの元本が生涯の非課税枠より大きい');
+  return out;
+}
+function sanityHtml() {
+  var list = sanity(D.input); if (!list.length) return '';
+  return '<div class="alert"><b>桁の確認</b><span>次の入力は、桁や単位が違っているかもしれません(金額は万円、率は%で入力します):' + esc(list.slice(0, 6).join(' ・ ')) + (list.length > 6 ? ' ほか' + (list.length - 6) + '件' : '') + '</span></div>';
 }
 function viewHome() {
   var s = R.summary, rows = R.rows;
@@ -1545,13 +1835,16 @@ function viewHome() {
   var st = R.start, used = st.parentPrincipal, pct = Math.min(100, Math.round(used / pn.lifetimeCap * 100));
   var html = '<div class="head"><div><h1>資産の見通し</h1><p class="sub">起点:' + esc(snapLabel(st)) + 'の残高 ・ グラフと表は各年の年末時点 ・ 最終保存 ' + esc(fmtTime(D.savedAt)) + '</p></div>' +
     '<div class="btns">' + (D.settings.fileId ? '<button type="button" class="btn" data-act="driveLoad">最新のデータを読み込む</button>' : '') + '<a class="btn" href="#compare">シナリオを保存</a><button type="button" class="btn primary" data-act="goSnapshot">実績残高を入力して更新</button></div></div>';
+  html += realToggle();
   html += '<div class="grid-kpi">' +
     kpi('現在の総資産(' + snapLabel(st) + ')', bigYenHtml(st.total), '現金 ' + manTxt(st.cash) + '万円 ・ 運用 ' + manTxt(st.total - st.cash) + '万円') +
     (at65 ? kpi('65歳時点の総資産(' + at65.year + '年)', bigYenHtml(at65.total), '税引後 ' + bigYen(at65.totalAfterTax)) : '') +
     kpi(end.headAge + '歳時点の総資産(' + end.year + '年)', bigYenHtml(end.total), 'うち子NISA ' + manTxt(end.childNisaTotal) + '万円') +
+    lifeKpi() +
     '<div class="kpi"><span class="kpi-lbl">親NISA枠の使用(元本)</span><span class="kpi-val">' + manTxt(used) + '<small> / ' + manTxt(pn.lifetimeCap) + '万円</small></span><div class="meter" role="img" aria-label="' + pct + '%"><div style="width:' + pct + '%"></div></div><span class="kpi-note">' + (s.parentNisaFilledYear ? s.parentNisaFilledYear + '年に枠が埋まる見込み' : '計算期間内には埋まりません') + '</span></div>' +
     '</div>';
   if (!inp.isSample && inp.snapshot.month == null) html += '<div class="alert"><b>確認</b><span>入力した残高が「何月末のものか」が未設定のため、' + st.year + '年の1年分の収入・支出・積立をすべて足して計算しています。年の途中の残高を入れている場合は、収入などが二重に数えられます。<button type="button" class="btn small" data-act="goSnapshot" style="margin-left:8px">残高の時点を設定する</button></span></div>';
+  html += sanityHtml();
   if (inp.isSample) html += '<div class="alert"><b>見本</b><span>表示しているのは架空の見本データです。「前提条件」の各タブと「実績残高」を、ご自身の値に書き換えてください。</span></div>';
   if (R.warnings.length) html += R.warnings.map(function (w) { return '<div class="alert"><b>注意</b><span>' + esc(w.message) + '。積立額や取り崩し額、生活防衛資金を見直してください。</span></div>'; }).join('');
   html += '<section class="card chart"><div class="head"><h2>口座別の資産推移</h2>' + legendHtml() + '</div><button type="button" class="chart-open" data-act="zoomChart" aria-label="グラフを拡大して年ごとの金額を見る">' + stackChart(rows) + '<span class="chart-hint">タップで拡大</span></button><p class="insight">' + esc(insightText()) + '</p></section>';
@@ -1562,7 +1855,8 @@ function viewHome() {
   var up = upcoming();
   html += '<div class="narrow" style="display:flex;flex-direction:column;gap:20px"><section class="card"><h2>これからの大きな支出・収入</h2>' +
     (up.length ? '<div class="list">' + up.map(function (e) { return '<div class="it"><span class="grow"><span class="sub" style="margin:0">' + e.year + '年</span> ' + esc(e.name) + '</span><b class="num">' + (e.amount < 0 ? '+' : '') + manTxt(Math.abs(e.amount)) + '万円</b></div>'; }).join('') + '</div>' : '<p class="hint">登録されたライフイベントはありません。</p>') +
-    '</section><section class="card"><h2>この計算の前提</h2><div class="chips">' + assumptionChips() + '</div><p class="hint">総資産は金融資産(現金・NISA・iDeCo・特定口座)の合計です。住宅の価値と住宅ローンの残高は含みません。退職金・年金・iDeCo受取時の税金は計算していません。結果は目安です。</p><a href="#input">前提条件を変更する</a></section></div></div>';
+    '</section><section class="card"><h2>この計算の前提</h2><div class="chips">' + assumptionChips() + '</div><p class="hint">総資産は金融資産(現金・NISA・iDeCo・特定口座)の合計です。住宅の価値と住宅ローンの残高は含みません。' + (inp.assumptions.receiptTax.enabled ? '退職金・年金・iDeCoの受け取り時の税金は簡易計算です。' : '退職金・年金は手取りで入力する前提で、受け取り時の税金は計算していません。') + '結果は目安です。</p><a href="#input">前提条件を変更する</a></section></div></div>';
+  html += rangeCard() + flowCards() + reducedCard();
   return html;
 }
 function snapLabel(st) { return st.year + '年' + (st.month ? st.month + '月末' : '初'); }
@@ -1577,7 +1871,12 @@ function assumptionChips() {
   if (R.rows.some(function (r) { return r.loanDeduction > 0; })) c.push('住宅ローン控除あり');
   if (inp.housing && inp.housing.enabled) c.push('住宅ローン 月' + round1(R.loan.monthly / 1e4) + '万円');
   c.push('生活防衛資金 ' + n0((inp.withdraw.reserve || 0) / 1e4) + '万円');
-  if (inp.withdraw.startHeadAge != null && inp.withdraw.monthly > 0) c.push(inp.withdraw.startHeadAge + '歳から月' + n0(inp.withdraw.monthly / 1e4) + '万円取り崩し');
+  if (inp.withdraw.mode === 'shortfall') c.push('足りない分だけ取り崩し');
+  else if (inp.withdraw.startHeadAge != null && inp.withdraw.monthly > 0) c.push(inp.withdraw.startHeadAge + '歳から月' + n0(inp.withdraw.monthly / 1e4) + '万円取り崩し');
+  if (inp.assumptions.pensionIndexed) c.push('年金は物価連動');
+  if (inp.assumptions.receiptTax.enabled) c.push('受け取り時の税金を計算');
+  if (inp.household.children.some(function (ch) { return ch.edu && Object.keys(ch.edu).length; })) c.push('教育費あり');
+  if (inp.housing && inp.housing.enabled && (inp.housing.prepayments.length || inp.housing.rateChanges.length)) c.push('繰上げ返済・金利変更あり');
   if (inp.childAllowance && inp.childAllowance.enabled !== false && inp.household.children.length) c.push('児童手当あり');
   var ide = inp.ideco.filter(function (d) { return d.monthly > 0; });
   if (ide.length) c.push('iDeCo ' + ide.map(function (d) { return personName(d.who) + ' 月' + round1(d.monthly / 1e4) + '万円'; }).join('・'));
@@ -1603,6 +1902,7 @@ function deltaTxt(d) { if (d == null || Math.abs(d) < 5000) return ''; return '�
 function viewInput() {
   var html = '<div class="head"><div><h1>前提条件</h1><p class="sub">変更するとすぐに再計算され、自動で保存されます。金額の単位は万円です。</p></div></div>';
   html += liveBar();
+  html += '<div id="sanity">' + sanityHtml() + '</div>';
   html += '<div class="tabs" role="tablist" aria-label="入力の種類">' + TABS.map(function (t) { return '<button type="button" role="tab" aria-selected="' + (ui.tab === t[0]) + '" data-act="tab" data-arg="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>';
   var f = { basic: tabBasic, income: tabIncome, living: tabLiving, housing: tabHousing, invest: tabInvest, ideco: tabIdeco, children: tabChildren, events: tabEvents, snapshot: tabSnapshot }[ui.tab];
   html += f();
@@ -1613,18 +1913,19 @@ function tabBasic() {
     textField('本人の呼び名', 'household.headName') + numField('本人の生まれ年', 'household.headBirthYear', '年', 1, { int: 1 }) +
     textField('配偶者の呼び名', 'household.spouseName') + numField('配偶者の生まれ年', 'household.spouseBirthYear', '年', 1, { int: 1 }) +
     numField('計算する最後の年齢(本人)', 'endHeadAge', '歳', 1, { int: 1 }) +
-    '</div></section>' +
+    '</div><p class="hint">計算する最後の年齢は100歳まで延ばせます。ホームの「資産が持つ年齢」は、ここの設定に関係なく100歳まで計算した結果です。</p></section>' +
     '<section class="card"><h2>運用と物価</h2><div class="fields">' +
     numField('想定利回り', 'assumptions.returnRate', '%/年', 1, { pct: 1 }) + numField('インフレ率', 'assumptions.inflation', '%/年', 1, { pct: 1 }) +
+    numField('利回りの幅(悲観・楽観の上下)', 'assumptions.returnSpread', '%', 1, { pct: 1 }) +
     numField('預金の金利(普通預金)', 'assumptions.cashRate', '%/年', 1, { pct: 1 }) +
     numField('売却益への税率', 'assumptions.taxRate', '%', 1, { pct: 1 }) + numField('生活費を入力した物価の年', 'assumptions.priceBaseYear', '年', 1, { int: 1 }) +
-    '</div><p class="hint">生活費は「物価の年」の金額で入力し、インフレ率で毎年上昇させます。預金の金利の初期値は、三菱UFJ銀行の普通預金の年0.5%(2026年11月2日からの金利)です。利息は、年初と年末の現金の平均に金利を掛け、税金(売却益と同じ税率)を引いた額を収入に加えます。</p></section>' +
+    '</div><p class="hint">生活費は「物価の年」の金額で入力し、インフレ率で毎年上昇させます。預金の金利の初期値は、三菱UFJ銀行の普通預金の年0.5%(2026年11月2日からの金利)です。利息は、年初と年末の現金の平均に金利を掛け、税金(売却益と同じ税率)を引いた額を収入に加えます。「利回りの幅」は、ホームの「利回りが変わった場合」で、想定利回りからどれだけ上下させるかの設定です(0にすると表示しません)。</p></section>' +
     '<section class="card"><h2>親NISA(夫婦合計)</h2><div class="fields">' +
     numField('年間の上限', 'invest.parentNisa.annualCap', '万円', 1e4) + numField('生涯の非課税枠', 'invest.parentNisa.lifetimeCap', '万円', 1e4) +
     '</div></section>';
 }
 function tabIncome() {
-  var inc = D.input.income, html = '';
+  var inc = D.input.income, html = '', rtOn = D.input.assumptions.receiptTax.enabled === true;
   inc.persons.forEach(function (p, i) {
     var base = 'income.persons.' + i;
     html += '<section class="card"><div class="head"><h2>' + esc(personName(p.who)) + 'の手取り(年額)</h2><span class="sub">5年ごとなど好きな年齢で入力</span></div><div class="list">' +
@@ -1634,15 +1935,20 @@ function tabIncome() {
           '<button type="button" class="btn icon" aria-label="この年齢を削除" data-act="delPoint" data-arg="' + i + ',' + k + '">×</button></div>';
       }).join('') + '</div>' +
       '<div class="btns"><button type="button" class="btn ghost small" data-act="addPoint" data-arg="' + i + '">+ 年齢を追加</button></div>' +
-      '<div class="fields">' + numField('給与を受け取る最後の年齢', base + '.lastWorkAge', '歳', 1, { int: 1 }) + numField('退職金(手取り・翌年に受取)', base + '.retirementBonus', '万円', 1e4) + '</div>' +
+      '<div class="fields">' + numField('給与を受け取る最後の年齢', base + '.lastWorkAge', '歳', 1, { int: 1 }) + numField('退職金(' + (rtOn ? '額面' : '手取り') + '・翌年に受取)', base + '.retirementBonus', '万円', 1e4) + (rtOn ? numField('退職までの勤続年数', base + '.serviceYears', '年', 1, { int: 1 }) : '') + '</div>' +
       '<p class="hint">入力した年齢の間は直線で予測します。収入がない場合は年齢を削除してください。共働きでなければ世帯の合計を本人に入れても構いません。</p></section>';
   });
-  html += '<section class="card"><h2>年金(年額・手取り)</h2><div class="list">' +
+  html += '<section class="card"><h2>年金(年額・' + (rtOn ? '額面' : '手取り') + ')</h2><div class="list">' +
     inc.pensions.map(function (p, k) {
       var b = 'income.pensions.' + k;
       return '<div class="it">' + whoSelect(b + '.who', '受け取る人') + '<span class="inp sm" style="width:92px"><input class="n" id="' + pid(b + '.startAge') + '" aria-label="受取開始年齢" data-path="' + b + '.startAge" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(p.startAge) + '"><span class="unit">歳から</span></span>' +
         bareNum(b + '.annual', '万円/年', 1e4, '年金の年額', 'grow') + '<button type="button" class="btn icon" aria-label="この年金を削除" data-act="delPension" data-arg="' + k + '">×</button></div>';
-    }).join('') + '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addPension">+ 年金を追加</button></div></section>';
+    }).join('') + '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addPension">+ 年金を追加</button></div>' +
+    checkField('年金額を物価に合わせて増やす', 'assumptions.pensionIndexed', true) +
+    '<p class="hint">入れると、年金額を「物価の年」の金額とみなして、インフレ率で毎年増やします。実際の年金は物価ほどには増えない仕組みのため、入れると少し楽観的、入れないと少し悲観的な結果になります。</p></section>';
+  html += '<section class="card"><h2>受け取り時の税金</h2>' + checkField('退職金・年金・iDeCoを額面で入力し、受け取り時の税金を計算する', 'assumptions.receiptTax.enabled', true) +
+    (rtOn ? '<div class="fields">' + numField('年金の手取りの割合', 'assumptions.receiptTax.pensionNetRate', '%', 1, { pct: 1 }) + '</div>' : '') +
+    '<p class="hint">' + (rtOn ? '退職金とiDeCoの一括受取は、退職所得控除(勤続・加入20年までは1年40万円、それ以降は1年70万円)を引いた残りの半分に、所得税と住民税がかかるものとして計算します。退職金とiDeCoは別々に計算する簡易計算のため、両方を近い年に受け取る場合は、実際より税金が少なく出ます。年金は、税金と社会保険料を引いた後の手取りの割合を掛けます(目安は85〜90%)。' : '入れない場合は、退職金・年金は手取りの金額を入力する前提で、iDeCoの受け取りにも税金はかからないものとして計算します。') + '</p></section>';
   html += '<section class="card"><h2>児童手当</h2>' + checkField('児童手当を収入に含める', 'childAllowance.enabled') +
     '<p class="hint">2024年10月以降の制度で計算します:高校生年代まで、所得制限なし。3歳未満は月1.5万円、3歳以上は月1万円、第3子以降は月3万円。今年の合計は <b data-calc="caNow"></b> です。子供は「子供」タブで登録します。</p></section>';
   return html;
@@ -1697,7 +2003,28 @@ function tabHousing() {
       '<div class="subcard calc">借入額 <b data-calc="loanAmount"></b> ・ 毎月の返済 <b data-calc="loanMonthly"></b> ・ 年間 <b data-calc="loanAnnual"></b><span class="hint">元利均等返済。購入した年の年初に買う想定で、購入年から返済期間の間、生活費とは別に支出します。家賃(「住宅購入で終了」の費目)は購入年から無くなります。</span></div>';
   }
   html += '</section>';
-  if (hs.enabled) html += deductionCard(hs);
+  if (hs.enabled) html += loanChangeCard(hs) + deductionCard(hs);
+  return html;
+}
+function loanChangeCard(hs) {
+  var yIn = function (path, v) { return '<span class="inp sm" style="width:100px"><input class="n" id="' + pid(path) + '" aria-label="年" data-path="' + path + '" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(v) + '"><span class="unit">年</span></span>'; };
+  var html = '<section class="card"><div class="head"><h2>繰上げ返済</h2><span class="sub">その年の1月に、現金から返済する想定</span></div>';
+  if (!hs.prepayments.length) html += '<p class="hint">登録されていません。</p>';
+  html += '<div class="list">' + hs.prepayments.map(function (pp, k) {
+    var b = 'housing.prepayments.' + k;
+    return '<div class="it" style="flex-wrap:wrap">' + yIn(b + '.year', pp.year) + bareNum(b + '.amount', '万円', 1e4, '繰上げ返済の額') +
+      '<span class="inp sm grow" style="min-width:190px"><select id="' + pid(b + '.type') + '" aria-label="繰上げ返済の方法" data-path="' + b + '.type" data-text="1"><option value="term"' + (pp.type === 'payment' ? '' : ' selected') + '>返済期間を短くする</option><option value="payment"' + (pp.type === 'payment' ? ' selected' : '') + '>毎月の返済額を減らす</option></select></span>' +
+      '<button type="button" class="btn icon" aria-label="この繰上げ返済を削除" data-act="delPrepay" data-arg="' + k + '">×</button></div>';
+  }).join('') + '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addPrepay">+ 繰上げ返済を追加</button></div>';
+  html += '<h3>金利の変更</h3>';
+  if (!hs.rateChanges.length) html += '<p class="hint">登録されていません。変動金利が上がる場合を試すときに使います。</p>';
+  html += '<div class="list">' + hs.rateChanges.map(function (c, k) {
+    var b = 'housing.rateChanges.' + k;
+    return '<div class="it" style="flex-wrap:wrap">' + yIn(b + '.year', c.year) + '<span class="sub" style="margin:0">から</span>' +
+      '<span class="inp sm" style="width:130px"><input class="n" id="' + pid(b + '.rate') + '" aria-label="変更後の金利" data-path="' + b + '.rate" data-pct="1" inputmode="decimal" value="' + pc(c.rate) + '"><span class="unit">%/年</span></span>' +
+      '<span class="grow"></span><button type="button" class="btn icon" aria-label="この金利の変更を削除" data-act="delRate" data-arg="' + k + '">×</button></div>';
+  }).join('') + '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addRate">+ 金利の変更を追加</button></div>';
+  html += '<div class="subcard calc">完済の予定 <b data-calc="loanPayoff"></b> ・ これからの返済の合計 <b data-calc="loanTotal"></b><span class="hint">金利が変わると、その年の1月から、残りの期間で返し終わるように毎月の返済額を計算し直します。繰上げ返済の額は、その年の住宅費に加えます。起点の年より前の繰上げ返済は、ローン残高だけに反映します。</span></div></section>';
   return html;
 }
 function deductionCard(hs) {
@@ -1737,12 +2064,15 @@ function tabInvest() {
   html += '</div><div class="btns">' + (showTo < endY ? '<button type="button" class="btn small" data-act="investAll">' + (showTo + 1) + '年以降も表示</button>' : '') + '</div>';
   html += checkField('現金が生活防衛資金を下回る年は積立を減らす', 'invest.reduceWhenShort') + '</section>';
 
-  html += '<section class="card"><h2>取り崩し</h2><div class="fields">' + numField('取り崩しを始める年齢(' + personName('head') + ')', 'withdraw.startHeadAge', '歳', 1, { int: 1 }) + numField('毎月の取り崩し額', 'withdraw.monthly', '万円/月', 1e4) + '</div>' +
-    checkField('取り崩し額をインフレに合わせて増やす', 'withdraw.inflate', true) +
+  var sf = inp.withdraw.mode === 'shortfall';
+  html += '<section class="card"><h2>取り崩し</h2><label class="field"><span class="lbl">取り崩し方</span><span class="inp"><select id="wd-mode" data-act="wdMode"><option value="fixed"' + (sf ? '' : ' selected') + '>毎月決まった額を取り崩す</option><option value="shortfall"' + (sf ? ' selected' : '') + '>足りない分だけ取り崩す</option></select></span></label>' +
+    (sf ? '<p class="hint">現金が生活防衛資金を下回った年に、足りない分だけを下の順番で売却します。決まった額の取り崩しは行いません。</p>'
+      : '<div class="fields">' + numField('取り崩しを始める年齢(' + personName('head') + ')', 'withdraw.startHeadAge', '歳', 1, { int: 1 }) + numField('毎月の取り崩し額', 'withdraw.monthly', '万円/月', 1e4) + '</div>' +
+    checkField('取り崩し額をインフレに合わせて増やす', 'withdraw.inflate', true)) +
     '<label class="field"><span class="lbl">取り崩す順番</span><span class="inp"><select id="wd-order" data-act="order"><option value="t"' + (inp.withdraw.order && inp.withdraw.order[0] === 'parentNisa' ? '' : ' selected') + '>特定口座 → 親NISA</option><option value="p"' + (inp.withdraw.order && inp.withdraw.order[0] === 'parentNisa' ? ' selected' : '') + '>親NISA → 特定口座</option></select></span></label>' +
     '<p class="hint">特定口座は売却益に課税されます。子NISAは取り崩さず、そのまま保持します。iDeCoは受取年齢で一括して現金に移します。</p></section>';
   html += '<section class="card"><h2>生活防衛資金</h2><div class="fields">' + numField('常に残しておく現金', 'withdraw.reserve', '万円', 1e4) + '</div>' +
-    checkField('下回ったら上の順番で追加売却する', 'withdraw.emergency') + '</section>';
+    (sf ? '<p class="hint">「足りない分だけ取り崩す」を選んでいるため、下回った分は常に追加で売却します。</p>' : checkField('下回ったら上の順番で追加売却する', 'withdraw.emergency')) + '</section>';
   return html;
 }
 function tabIdeco() {
@@ -1755,10 +2085,10 @@ function tabIdeco() {
       '<label class="field"><span class="lbl">加入する人</span>' + whoSelect(b + '.who', '加入する人') + '</label>' +
       numField('毎月の掛金', b + '.monthly', '万円/月', 1e4) + numField('掛金を始める年', b + '.startYear', '年', 1, { int: 1 }) +
       numField('掛金を終える年齢', b + '.endAge', '歳', 1, { int: 1 }) + numField('一括で受け取る年齢', b + '.receiveAge', '歳', 1, { int: 1 }) +
-      numField('節税率(所得税+住民税)', b + '.taxSavingRate', '%', 1, { pct: 1 }) + '</div></div>';
+      numField('節税率(所得税+住民税)', b + '.taxSavingRate', '%', 1, { pct: 1 }) + (D.input.assumptions.receiptTax.enabled ? numField('これまでの加入年数(起点の時点)', b + '.pastYears', '年', 1, { int: 1 }) : '') + '</div></div>';
   });
   html += '<div class="btns"><button type="button" class="btn ghost small" data-act="addIdeco">+ iDeCoを追加</button></div>';
-  html += '<p class="hint">2026年12月から掛金の上限が上がり(会社員で企業年金がない場合は月6.2万円など)、加入できる年齢も70歳未満に広がる予定です。節税額は、本人に給与収入がある年だけ計算します。受取時の税金は退職所得控除の範囲内とみなして計算していません。</p></section>';
+  html += '<p class="hint">2026年12月から掛金の上限が上がり(会社員で企業年金がない場合は月6.2万円など)、加入できる年齢も70歳未満に広がる予定です。節税額は、本人に給与収入がある年だけ計算します。' + (D.input.assumptions.receiptTax.enabled ? '受け取り時の税金は、加入年数から退職所得控除を計算して引きます(「収入」タブの「受け取り時の税金」)。' : '受け取り時の税金は、退職所得控除の範囲内とみなして計算していません(「収入」タブの「受け取り時の税金」で計算に入れられます)。') + '</p></section>';
   return html;
 }
 function tabChildren() {
@@ -1767,7 +2097,26 @@ function tabChildren() {
     var b = 'household.children.' + k;
     return '<div class="it">' + textField('', b + '.name', { bare: 1, label: '子供の名前' }) + '<span class="inp sm" style="width:120px"><input class="n" id="' + pid(b + '.birthYear') + '" aria-label="生まれ年" data-path="' + b + '.birthYear" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(c.birthYear) + '"><span class="unit">年生まれ</span></span><button type="button" class="btn icon" aria-label="' + esc(c.name) + 'を削除" data-act="delChild" data-arg="' + k + '">×</button></div>';
   }).join('') + '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addChild">+ 子供を追加</button></div>' +
-    '<p class="hint">子供を追加すると、児童手当と子NISAが自動で計算に入ります。教育費は「生活費」や「ライフイベント」に入れてください。</p></section>';
+    '<p class="hint">子供を追加すると、児童手当と子NISAが自動で計算に入ります。</p></section>';
+  if (ch.length) {
+    var manY = function (v) { return Math.round(v / 1e4); };
+    var opt = function (cur, val, label) { return '<option value="' + val + '"' + ((cur || 'none') === val ? ' selected' : '') + '>' + label + '</option>'; };
+    var school = function (k, st, label) {
+      var cur = (ch[k].edu || {})[st], t = E.EDU[st];
+      var o = opt(cur, 'none', '計算しない');
+      if (st === 'u') o += opt(cur, 'national', '国立(年' + manY(t.national[0]) + '万円)') + opt(cur, 'privArts', '私立文系(年' + manY(t.privArts[0]) + '万円)') + opt(cur, 'privSci', '私立理系(年' + manY(t.privSci[0]) + '万円)');
+      else o += opt(cur, 'public', '公立(年' + manY(t.public) + '万円)') + opt(cur, 'private', '私立(年' + manY(t.private) + '万円)');
+      return '<label class="field"><span class="lbl">' + label + '</span><span class="inp"><select id="f-edu-' + k + '-' + st + '" data-act="eduSel" data-arg="' + k + ',' + st + '">' + o + '</select></span></label>';
+    };
+    html += '<section class="card"><div class="head"><h2>教育費(進路を選ぶと自動で計算)</h2><span class="sub">金額は今の物価の目安 ・ 物価上昇を反映</span></div>';
+    ch.forEach(function (c, k) {
+      var tot = 0; for (var ag = 4; ag <= 22; ag++) tot += E.educationCost(c.edu, ag);
+      html += '<div class="subcard"><div class="head"><h3>' + esc(c.name || '子供') + '</h3><div class="btns"><button type="button" class="btn small" data-act="eduAll" data-arg="' + k + ',public">すべて公立・国立</button><button type="button" class="btn small" data-act="eduAll" data-arg="' + k + ',none">計算しない</button></div></div><div class="fields">' +
+        school(k, 'k', '幼稚園(4〜6歳の年)') + school(k, 'e', '小学校(7〜12歳の年)') + school(k, 'j', '中学校(13〜15歳の年)') + school(k, 'h', '高校(16〜18歳の年)') + school(k, 'u', '大学(19〜22歳の年)') +
+        '</div><div class="calc">合計の目安 <b>' + n0(tot / 1e4) + '万円</b>(今の物価)</div></div>';
+    });
+    html += '<p class="hint">幼稚園から高校までは、文部科学省「子供の学習費調査」(令和5年度)の平均で、塾や習い事の費用も含みます。大学は授業料と施設費の年額で、1年目には入学金(国立28万円、私立22〜25万円)を加えます。仕送りや下宿代は含みません。年齢は「その年に迎える年齢」で数えるため、早生まれの場合は1年ずれます。「生活費」や「ライフイベント」にすでに教育費を入れている場合は、二重にならないようにしてください。</p></section>';
+  }
   html += '<section class="card"><h2>子NISA(子供1人あたり)</h2><div class="fields">' +
     numField('年間の上限', 'invest.childNisa.annualCap', '万円', 1e4) + numField('総額の上限', 'invest.childNisa.lifetimeCap', '万円', 1e4) +
     numField('積立を始められる年', 'invest.childNisa.startYear', '年', 1, { int: 1 }) + numField('積立できる年齢(未満)', 'invest.childNisa.untilAge', '歳', 1, { int: 1 }) +
@@ -1780,13 +2129,15 @@ function tabEvents() {
   var html = '<section class="card"><div class="head"><h2>ライフイベント</h2><span class="sub">一時的な支出・収入</span></div><div class="list">';
   order.forEach(function (k) {
     var e = ev[k], b = 'events.' + k, isInc = e.amount < 0;
-    html += '<div class="it" style="flex-wrap:wrap"><span class="inp sm" style="width:100px"><input class="n" id="' + pid(b + '.year') + '" aria-label="年" data-path="' + b + '.year" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(e.year) + '"><span class="unit">年</span></span>' +
+    html += '<div class="it ev-row" style="flex-wrap:wrap"><span class="inp sm" style="width:100px"><input class="n" id="' + pid(b + '.year') + '" aria-label="年" data-path="' + b + '.year" data-scale="1" data-int="1" inputmode="numeric" value="' + esc(e.year) + '"><span class="unit">年</span></span>' +
       textField('', b + '.name', { bare: 1, label: '内容' }) +
       '<span class="inp sm" style="width:92px"><select id="' + pid(b + '.kind') + '" aria-label="支出か収入か" data-act="evKind" data-arg="' + k + '"><option value="out"' + (isInc ? '' : ' selected') + '>支出</option><option value="in"' + (isInc ? ' selected' : '') + '>収入</option></select></span>' +
       '<span class="inp sm" style="width:130px"><input class="n" id="' + pid(b + '.amount') + '" aria-label="金額" data-path="' + b + '.amount" data-scale="1e4" data-abs="' + (isInc ? '-1' : '1') + '" inputmode="decimal" value="' + round1(Math.abs(e.amount) / 1e4) + '"><span class="unit">万円</span></span>' +
+      '<span class="inp sm" style="width:124px"><input class="n" id="' + pid(b + '.every') + '" aria-label="繰り返す間隔(年)" data-path="' + b + '.every" data-scale="1" data-int="1" inputmode="numeric" placeholder="1回" value="' + (e.every > 0 ? esc(e.every) : '') + '"><span class="unit">年ごと</span></span>' +
+      (e.every > 0 ? '<span class="inp sm" style="width:136px"><input class="n" id="' + pid(b + '.until') + '" aria-label="繰り返しを終える年" data-path="' + b + '.until" data-scale="1" data-int="1" inputmode="numeric" placeholder="ずっと" value="' + (e.until != null ? esc(e.until) : '') + '"><span class="unit">年まで</span></span>' : '') +
       '<button type="button" class="btn icon" aria-label="このイベントを削除" data-act="delEvent" data-arg="' + k + '">×</button></div>';
   });
-  html += '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addEvent">+ イベントを追加</button></div><p class="hint">金額はその年の実額で入力します(インフレは上乗せしません)。</p></section>';
+  html += '</div><div class="btns"><button type="button" class="btn ghost small" data-act="addEvent">+ イベントを追加</button><button type="button" class="btn ghost small" data-act="addRepeat">+ 繰り返しの支出を追加(車の買い替えなど)</button></div><p class="hint">金額はその年の実額で入力します(1回だけのイベントには、インフレを上乗せしません)。「年ごと」に数字を入れると、その間隔で繰り返す支出・収入になり、2回目以降は物価上昇を反映します。「年まで」を空欄にすると、計算の最後まで繰り返します。</p></section>';
   return html;
 }
 function tabSnapshot() {
@@ -1822,6 +2173,7 @@ function tableData() {
     { g: '', h: '年齢(' + [personName('head'), personName('spouse')].concat(kidNames).join('/') + ')', l: 1, f: function (r) { return [r.headAge, r.spouseAge].concat(r.childAges).map(function (a) { return a == null || a < 0 ? '—' : a; }).join(' / '); } },
     { g: 'g-flow', h: '収入', f: function (r) { return cell(r.income); } },
     { g: 'g-flow', h: '生活費', f: function (r) { return cell(r.living); } },
+    { g: 'g-flow', h: '教育費', f: function (r) { return cell(r.education); } },
     { g: 'g-flow', h: '住宅費', f: function (r) { return cell(r.housingCost); } },
     { g: 'g-flow', h: 'イベント', f: function (r) { return cell(r.eventCost); } },
     { g: 'g-flow', h: '収支', f: function (r) { return manTxt(r.net); }, c: function (r) { return r.net < 0 ? 'neg' : 'tot'; } },
@@ -1836,7 +2188,7 @@ function tableData() {
     { g: '', h: '総資産', f: function (r) { return manTxt(r.total); }, c: function () { return 'tot'; } }
   ];
   items.forEach(function (name) { cols.push({ g: 'g-living', h: name, f: function (r) { return cell(r.livingByItem[name] || 0); } }); });
-  [['給与', 'salary'], ['退職金', 'bonus'], ['年金', 'pension'], ['児童手当', 'childAllowance'], ['iDeCo節税', 'taxSaving'], ['ローン控除', 'loanDeduction'], ['預金利息', 'cashInterest'], ['iDeCo受取', 'idecoReceive'], ['親NISA元本', 'parentPrincipal'], ['特定口座取得額', 'taxableCost'], ['ローン残高', 'loanBalance'], ['売却時の税', 'withdrawTax'], ['税引後総資産', 'totalAfterTax']].forEach(function (p) {
+  [['給与', 'salary'], ['退職金', 'bonus'], ['年金', 'pension'], ['児童手当', 'childAllowance'], ['iDeCo節税', 'taxSaving'], ['ローン控除', 'loanDeduction'], ['預金利息', 'cashInterest'], ['iDeCo受取', 'idecoReceive'], ['親NISA元本', 'parentPrincipal'], ['特定口座取得額', 'taxableCost'], ['ローン残高', 'loanBalance'], ['繰上げ返済', 'prepay'], ['売却時の税', 'withdrawTax'], ['受取時の税', 'receiptTax'], ['税引後総資産', 'totalAfterTax']].forEach(function (p) {
     cols.push({ g: 'g-detail', h: p[0], f: function (r) { return cell(r[p[1]]); } });
   });
   cols.push({ g: '', h: 'メモ', l: 1, m: 1, f: function (r) {
@@ -1846,6 +2198,7 @@ function tableData() {
     if (r.emergency > 0) m.push('不足分を売却');
     if (r.idecoReceive > 0) m.push('iDeCo受取');
     if (r.bonus > 0) m.push('退職金');
+    if (r.prepay > 0) m.push('繰上げ返済');
     return m.join(' ・ ');
   } });
   return cols;
@@ -1855,6 +2208,7 @@ function viewTable() {
   var cls = ['flow', 'inv', 'acc', 'living', 'detail'].filter(function (k) { return hid[k]; }).map(function (k) { return 'hide-' + k; }).join(' ');
   var tg = [['flow', '収支'], ['inv', '積立・取り崩し'], ['acc', '口座残高'], ['living', '生活費の内訳'], ['detail', '収入の内訳・元本・税']];
   var html = '<div class="head"><div><h1>年次推移表</h1><p class="sub">' + (rows[0] ? rows[0].year : '') + '〜' + (rows.length ? rows[rows.length - 1].year : '') + '年 ・ 単位:万円 ・ 赤字は収支や現金がマイナス</p></div><button type="button" class="btn" data-act="copyCsv">表をCSVでコピー</button></div>';
+  html += realToggle();
   html += '<div class="toggles"><span class="sub" style="margin:0">表示する列</span>' + tg.map(function (t) { return '<button type="button" class="toggle" aria-pressed="' + !hid[t[0]] + '" data-act="toggleCol" data-arg="' + t[0] + '">' + t[1] + '</button>'; }).join('') + '</div>';
   html += '<div class="tbl-wrap" style="max-height:72vh"><table class="data ' + cls + '"><thead><tr><th scope="col" class="l stick">年</th>' + cols.map(function (c) { return '<th scope="col" class="' + (c.g || '') + (c.l ? ' l' : '') + '">' + esc(c.h) + '</th>'; }).join('') + '</tr></thead><tbody>';
   rows.forEach(function (r) {
@@ -1877,12 +2231,64 @@ var LINE_COLORS = ['var(--accent)', 'var(--c-tax)', 'var(--c-ideco)', 'var(--goo
 function scenarioResult(s) {
   var inp = clone(s.input);
   inp.snapshot = clone(D.input.snapshot);
-  return E.simulate(normalize(inp));
+  normalize(inp);
+  var res = E.simulate(inp);
+  return isReal() ? deflate(res, inp) : res;
+}
+// 保存したシナリオと現在の条件の違いを、短い言葉で並べる
+var DIFF_NAMED = [
+  [/^assumptions\.returnRate$/, '利回り', 'pct'], [/^assumptions\.inflation$/, 'インフレ率', 'pct'], [/^assumptions\.cashRate$/, '預金金利', 'pct'], [/^assumptions\.returnSpread$/, '利回りの幅', 'pct'],
+  [/^assumptions\.pensionIndexed$/, '年金の物価連動', 'bool'], [/^assumptions\.receiptTax\.enabled$/, '受け取り時の税金の計算', 'bool'],
+  [/^endHeadAge$/, '計算する最後の年齢', 'age'],
+  [/^housing\.enabled$/, '住宅購入', 'bool'], [/^housing\.purchaseYear$/, '住宅購入の年', 'year'], [/^housing\.price$/, '物件価格', 'man'], [/^housing\.downPayment$/, '頭金', 'man'], [/^housing\.rate$/, 'ローン金利', 'pct'], [/^housing\.years$/, '返済期間', 'yrs'],
+  [/^withdraw\.mode$/, '取り崩し方', 'mode'], [/^withdraw\.startHeadAge$/, '取り崩し開始', 'age'], [/^withdraw\.monthly$/, '毎月の取り崩し', 'man'], [/^withdraw\.reserve$/, '生活防衛資金', 'man'],
+  [/^income\.persons\.\d+\.lastWorkAge$/, '給与を受け取る最後の年齢', 'age'], [/^income\.persons\.\d+\.retirementBonus$/, '退職金', 'man']
+];
+var DIFF_GROUPS = [[/^income\./, '収入'], [/^expenses\.|^livingAges/, '生活費'], [/^housing\.prepayments/, '繰上げ返済'], [/^housing\.rateChanges/, 'ローン金利の変更'], [/^housing\./, '住宅'],
+  [/^invest\.byYear\./, '積立額'], [/^invest\./, '積立の設定'], [/^ideco\./, 'iDeCo'], [/^household\.children/, '子供・教育費'], [/^household\./, '世帯'], [/^events\./, 'ライフイベント'],
+  [/^withdraw\./, '取り崩しの設定'], [/^childAllowance/, '児童手当'], [/^assumptions\./, '運用と物価']];
+function flatLeaves(o, pre, out) {
+  if (o && typeof o === 'object') Object.keys(o).forEach(function (k) { flatLeaves(o[k], pre ? pre + '.' + k : k, out); });
+  else out[pre] = o;
+  return out;
+}
+function diffList(cur, sc) {
+  var a = flatLeaves(cur, '', {}), b = flatLeaves(sc, '', {}), keys = {}, named = [], groups = {}, order = [];
+  Object.keys(a).forEach(function (k) { keys[k] = 1; }); Object.keys(b).forEach(function (k) { keys[k] = 1; });
+  var nv = function (v) { return v == null || v === false || v === '' ? null : v; };
+  var fmt = function (v, t) {
+    if (t === 'bool') return v ? 'あり' : 'なし';
+    if (v == null) return 'なし';
+    if (t === 'pct') return pc(v) + '%'; if (t === 'man') return n0(v / 1e4) + '万円'; if (t === 'age') return v + '歳'; if (t === 'year' || t === 'yrs') return v + '年';
+    if (t === 'mode') return v === 'shortfall' ? '足りない分だけ' : '毎月決まった額';
+    return String(v);
+  };
+  var noHouse = !(cur.housing && cur.housing.enabled) && !(sc.housing && sc.housing.enabled);
+  Object.keys(keys).sort().forEach(function (k) {
+    if (/^snapshot\.|^isSample$|^housing\.deduction\.(limit|years|lastEntryYear)$/.test(k)) return;
+    if (noHouse && /^housing\./.test(k)) return;
+    var x = nv(a[k]), y = nv(b[k]);
+    if (x === y || (typeof x === 'number' && typeof y === 'number' && Math.abs(x - y) < 1e-9)) return;
+    var nm = DIFF_NAMED.find(function (d) { return d[0].test(k); });
+    if (nm) { var who = /^income\.persons\.(\d+)\./.exec(k); var p = who && (sc.income.persons[+who[1]] || cur.income.persons[+who[1]]); named.push((p ? personName(p.who) + 'の' : '') + nm[1] + ' ' + fmt(y, nm[2]) + '(現在は' + fmt(x, nm[2]) + ')'); return; }
+    var g = DIFF_GROUPS.find(function (d) { return d[0].test(k); }), name = g ? g[1] : 'その他';
+    if (!groups[name]) { groups[name] = 0; order.push(name); }
+    groups[name]++;
+  });
+  return named.concat(order.map(function (n) { return n + ' ' + groups[n] + 'か所'; }));
+}
+function scenarioDiff(s) {
+  try {
+    var inp = clone(s.input); inp.snapshot = clone(D.input.snapshot); normalize(inp);
+    var list = diffList(D.input, inp);
+    return list.length ? list.slice(0, 8).join(' ・ ') + (list.length > 8 ? ' ほか' : '') : '現在の条件と同じ';
+  } catch (e) { return ''; }
 }
 function viewCompare() {
   var sc = D.scenarios;
   var sets = [{ name: '現在の条件', res: R }].concat(sc.map(function (s) { var res; try { res = scenarioResult(s); } catch (e) { res = null; } return { name: s.name, res: res, saved: s.savedAt }; })).filter(function (s) { return s.res && s.res.rows.length; });
   var html = '<div class="head"><div><h1>シナリオ比較</h1><p class="sub">今の前提条件をシナリオとして保存し、総資産の推移を重ねて比べます。保存したシナリオは、今の実績残高から計算し直します</p></div></div>';
+  html += realToggle();
   html += '<section class="card"><h2>現在の条件を保存</h2><div class="btns" style="align-items:center"><span class="inp sm" style="flex:1 1 220px"><input id="sc-name" aria-label="シナリオの名前" placeholder="例:利回り5%・住宅購入を2年遅らせる"></span><button type="button" class="btn primary" data-act="saveScenario">保存</button></div></section>';
   if (sets.length > 1) {
     html += '<section class="card chart"><div class="head"><h2>総資産の推移</h2><div class="legend">' + sets.map(function (s, i) { return '<span><i style="background:' + LINE_COLORS[i % LINE_COLORS.length] + '"></i>' + esc(s.name) + '</span>'; }).join('') + '</div></div>' + lineChart(sets) + '</section>';
@@ -1895,7 +2301,7 @@ function viewCompare() {
       sc.map(function (s, i) {
         var res; try { res = scenarioResult(s); } catch (e) { res = null; }
         var conf = ui.confirm === 'sc' + i;
-        return '<tr><th class="l" scope="row">' + esc(s.name) + '</th><td>' + (res && res.summary.at65 ? bigYen(res.summary.at65.total) : '—') + '</td><td>' + (res ? bigYen(res.summary.end.total) : '—') + '</td><td>' + (res ? bigYen(res.summary.peak.total) : '—') + '</td><td class="l">' + esc(fmtTime(s.savedAt)) + '</td><td class="l"><div class="btns">' +
+        return '<tr><th class="l" scope="row">' + esc(s.name) + '<div class="sub" style="margin:2px 0 0;font-weight:400;white-space:normal;min-width:220px">違い:' + esc(scenarioDiff(s)) + '</div></th><td>' + (res && res.summary.at65 ? bigYen(res.summary.at65.total) : '—') + '</td><td>' + (res ? bigYen(res.summary.end.total) : '—') + '</td><td>' + (res ? bigYen(res.summary.peak.total) : '—') + '</td><td class="l">' + esc(fmtTime(s.savedAt)) + '</td><td class="l"><div class="btns">' +
           (conf ? '<span class="sub" style="margin:0">今の条件を上書きします</span><button type="button" class="btn small primary" data-act="applyScenario" data-arg="' + i + '">読み込む</button><button type="button" class="btn small" data-act="cancelConfirm">やめる</button>'
             : (ui.confirm === 'del' + i ? '<button type="button" class="btn small danger" data-act="delScenario" data-arg="' + i + '">削除する</button><button type="button" class="btn small" data-act="cancelConfirm">やめる</button>'
               : '<button type="button" class="btn small" data-act="confirm" data-arg="sc' + i + '">この条件を読み込む</button><button type="button" class="btn small danger" data-act="confirm" data-arg="del' + i + '">削除</button>')) +
@@ -1905,23 +2311,7 @@ function viewCompare() {
   return html + '</section>';
 }
 function lineChart(sets) {
-  var W = 1000, H = 300, L = 64, B = 40, T = 10, Rr = 8, ih = H - B - T, iw = W - L - Rr;
-  var y0 = Math.min.apply(null, sets.map(function (s) { return s.res.rows[0].year; }));
-  var y1 = Math.max.apply(null, sets.map(function (s) { return s.res.rows[s.res.rows.length - 1].year; }));
-  var maxV = Math.max.apply(null, sets.map(function (s) { return Math.max.apply(null, s.res.rows.map(function (r) { return r.total; })); }));
-  var nm = niceMax(maxV); var X = function (y) { return L + (y - y0) / Math.max(1, y1 - y0) * iw; }; var Y = function (v) { return T + ih - Math.max(0, v) / nm.max * ih; };
-  var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="シナリオごとの総資産の推移">';
-  for (var t = 0; t <= nm.max + 1; t += nm.step) out += '<line class="grid" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(t) + '" y2="' + Y(t) + '"></line><text class="tick" x="' + (L - 8) + '" y="' + (Y(t) + 4) + '" text-anchor="end">' + tickLabel(t) + '</text>';
-  var hb = D.input.household.headBirthYear;
-  for (var y = y0; y <= y1; y++) if ((y - y0) % 10 === 0) out += '<text class="tick" x="' + X(y) + '" y="' + (H - B + 16) + '" text-anchor="middle">' + y + '</text><text class="tick" x="' + X(y) + '" y="' + (H - B + 32) + '" text-anchor="middle">' + (y - hb) + '歳</text>';
-  sets.forEach(function (s, i) {
-    var c = LINE_COLORS[i % LINE_COLORS.length];
-    var d = s.res.rows.map(function (r, k) { return (k ? 'L' : 'M') + X(r.year).toFixed(1) + ' ' + Y(r.total).toFixed(1); }).join(' ');
-    out += '<path d="' + d + '" style="fill:none;stroke:' + c + '" stroke-width="' + (i === 0 ? 3 : 2) + '"' + (i === 0 ? '' : ' stroke-dasharray="6 4"') + '></path>';
-    var last = s.res.rows[s.res.rows.length - 1];
-    out += '<circle cx="' + X(last.year) + '" cy="' + Y(last.total) + '" r="4" style="fill:' + c + '"></circle>';
-  });
-  return out + '<line class="axis" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + (T + ih) + '" y2="' + (T + ih) + '"></line></svg>';
+  return seriesChart(sets.map(function (st, i) { return { name: st.name, color: LINE_COLORS[i % LINE_COLORS.length], dash: i > 0, pts: st.res.rows.map(function (r) { return [r.year, r.total]; }) }; }), { label: 'シナリオごとの総資産の推移' });
 }
 
 // ---------- 同期とデータ ----------
@@ -2019,7 +2409,7 @@ function shareListHtml() {
 var dpTimer = null, dpLeft = 60, dpTimeout = 60, displayOverride = null;
 function showDisplay() {
   var el = document.getElementById('display');
-  var src = displayOverride || { input: D.input, R: R, savedAt: D.savedAt };
+  var src = displayOverride || { input: D.input, R: RN, savedAt: D.savedAt };
   var inp = src.input, res = src.R, s = res.summary, rows = res.rows;
   if (!rows.length) return;
   var now = rows[0], pn = inp.invest.parentNisa;
@@ -2082,7 +2472,7 @@ function openZoom(src) {
   ZM = { rows: rows, inp: inp, dark: dark, sel: sel, prevFocus: document.activeElement };
   var el = document.getElementById('zoom');
   el.className = dark ? 'dk' : '';
-  el.innerHTML = '<div class="zm-top"><h2>口座別の資産推移</h2>' + legendHtml() +
+  el.innerHTML = '<div class="zm-top"><h2>口座別の資産推移' + (!src && isReal() ? '(今の物価に換算)' : '') + '</h2>' + legendHtml() +
     '<div class="zm-nav"><button type="button" class="btn small" id="zm-prev" aria-label="前の年">◀ 前の年</button><button type="button" class="btn small" id="zm-next" aria-label="次の年">次の年 ▶</button><button type="button" class="btn small" id="zm-close">閉じる</button></div></div>' +
     '<div class="zm-body"><div class="zm-chart"><div class="zm-svg" id="zm-svg"></div><p class="hint" style="margin:4px 4px 0">グラフを触ると、その年の金額を表示します。指を左右に動かすと年を変えられます。</p></div><div class="zm-panel" id="zm-panel" aria-live="polite"></div></div>';
   el.hidden = false;
@@ -2156,6 +2546,8 @@ function zoomPanel(r, inp) {
   if (r.emergency > 0) memo.push('現金不足分 ' + manTxt(r.emergency) + '万円を売却');
   if (r.idecoReceive > 0) memo.push('iDeCoを一括受取');
   if (r.bonus > 0) memo.push('退職金を受取');
+  if (r.prepay > 0) memo.push('住宅ローンを' + manTxt(r.prepay) + '万円繰上げ返済');
+  if (r.idecoTax > 0) memo.push('iDeCo受取の税金 ' + manTxt(r.idecoTax) + '万円(差し引き済み)');
   var out = '<div><h3>' + r.year + '年</h3><div class="ages">' + esc(names.join(' ・ ')) + '</div></div>' +
     '<div><div class="kpi-lbl">総資産</div><div class="zm-total">' + bigYenHtml(r.total) + '</div><div class="kpi-note">税引後 ' + bigYen(r.totalAfterTax) + '</div></div>';
   out += '<div class="zm-grp"><h4>口座の残高(年末)</h4>' +
@@ -2164,9 +2556,9 @@ function zoomPanel(r, inp) {
     row('現金', r.cash, { c: colorOf.cash, always: 1, neg: 1 }) + '</div>';
   out += '<div class="zm-grp"><h4>その年の収入</h4>' +
     row('給与(手取り)', r.salary) + row('退職金', r.bonus) + row('年金', r.pension) + row('児童手当', r.childAllowance) +
-    row('一時的な収入', r.eventIncome) + row('iDeCoの節税', r.taxSaving) + row('住宅ローン控除', r.loanDeduction) + row('預金の利息(税引後)', r.cashInterest) + row('収入の合計', r.income, { b: 1, always: 1 }) + '</div>';
+    row('一時的な収入', r.eventIncome) + row('iDeCoの節税', r.taxSaving) + row('住宅ローン控除', r.loanDeduction) + row('預金の利息(税引後)', r.cashInterest) + row('退職金・年金の税金など', -(r.bonusTax + r.pensionTax), { neg: 1 }) + row('収入の合計', r.income, { b: 1, always: 1 }) + '</div>';
   out += '<div class="zm-grp"><h4>その年の支出</h4>' +
-    row('生活費', r.living) + row('住宅費', r.housingCost) + row('イベント', r.eventCost) + row('支出の合計', r.expense, { b: 1, always: 1 }) +
+    row('生活費', r.living) + row('教育費', r.education) + row('住宅費', r.housingCost) + row('イベント', r.eventCost) + row('支出の合計', r.expense, { b: 1, always: 1 }) +
     row('年間収支', r.net, { b: 1, always: 1, neg: 1 }) + '</div>';
   if (r.loanBalance > 0) out += '<div class="zm-grp"><h4>住宅ローン</h4>' + row('ローン残高(年末)', r.loanBalance, { always: 1 }) + '</div>';
   var flow = row('積立', r.invested) + row('iDeCo掛金', r.idecoIn) + row('取り崩し', r.plannedWithdraw) + row('不足分の売却', r.emergency) + row('iDeCo受取', r.idecoReceive);
@@ -2182,16 +2574,23 @@ function updateCalcs() {
   if (q('at65')) q('at65').textContent = s.at65 ? bigYen(s.at65.total) : '—';
   if (q('end')) q('end').textContent = s.end ? bigYen(s.end.total) : '—';
   if (q('delta')) q('delta').textContent = deltaTxt(baseline && baseline.at65 && s.at65 ? s.at65.total - baseline.at65 : null);
-  if (q('loanAmount')) { q('loanAmount').textContent = n0(R.loan.amount / 1e4) + '万円'; q('loanMonthly').textContent = round1(R.loan.monthly / 1e4) + '万円'; q('loanAnnual').textContent = round1(R.loan.annual / 1e4) + '万円'; }
+  if (q('loanAmount')) { q('loanAmount').textContent = n0(RN.loan.amount / 1e4) + '万円'; q('loanMonthly').textContent = round1(RN.loan.monthly / 1e4) + '万円'; q('loanAnnual').textContent = round1(RN.loan.annual / 1e4) + '万円'; }
   if (q('ldFirst')) {
-    var ldRows = R.rows.filter(function (r) { return r.loanDeduction > 0; });
+    var ldRows = RN.rows.filter(function (r) { return r.loanDeduction > 0; });
     var ldSum = ldRows.reduce(function (a, r) { return a + r.loanDeduction; }, 0);
     q('ldFirst').textContent = ldRows.length ? round1(ldRows[0].loanDeduction / 1e4) + '万円(' + ldRows[0].year + '年)' : '0万円';
     q('ldTotal').textContent = round1(ldSum / 1e4) + '万円(' + ldRows.length + '年分)';
   }
-  if (q('caNow') && R.rows[0]) q('caNow').textContent = round1(R.rows[0].childAllowance / 1e4) + '万円';
+  if (q('loanPayoff')) {
+    var hsx = D.input.housing, py = RN.loan.payoffYear;
+    q('loanPayoff').textContent = py ? py + '年(' + (py - D.input.household.headBirthYear) + '歳)' : '計算期間内には完済しません';
+    var lt = RN.rows.reduce(function (a, r) { return a + r.housingCost - (r.year === hsx.purchaseYear ? hsx.downPayment + (hsx.costs || 0) : 0); }, 0);
+    q('loanTotal').textContent = n0(lt / 1e4) + '万円';
+  }
+  var snEl = document.getElementById('sanity'); if (snEl) snEl.innerHTML = sanityHtml();
+  if (q('caNow') && RN.rows[0]) q('caNow').textContent = round1(RN.rows[0].childAllowance / 1e4) + '万円';
   document.querySelectorAll('[data-calc-year]').forEach(function (el) {
-    var y = Number(el.getAttribute('data-calc-year')); var r = R.rows.find(function (x) { return x.year === y; });
+    var y = Number(el.getAttribute('data-calc-year')); var r = RN.rows.find(function (x) { return x.year === y; });
     if (!r) { el.textContent = ''; return; }
     var parts = [];
     if (r.parentIn) parts.push('親' + manTxt(r.parentIn));
@@ -2228,12 +2627,12 @@ function onInput(ev) {
     return;
   }
   var path = t.getAttribute('data-path'); if (!path) return;
-  if (t.hasAttribute('data-bool')) { setPath(D.input, path, t.checked); if (path === 'housing.enabled' || path.indexOf('housing.deduction.') === 0) { normalize(D.input); changed(); render(); return; } }
+  if (t.hasAttribute('data-bool')) { setPath(D.input, path, t.checked); if (path === 'housing.enabled' || path.indexOf('housing.deduction.') === 0 || path === 'assumptions.receiptTax.enabled') { normalize(D.input); changed(); render(); return; } }
   else if (t.hasAttribute('data-text')) setPath(D.input, path, t.value);
   else {
     var raw = String(t.value).replace(/[,，\s万円%]/g, '').replace(/[０-９．－]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
     if (raw === '' || raw === '-') {
-      if (path.indexOf('invest.byYear.') === 0 || path === 'housing.deduction.maxPerYear') setPath(D.input, path, undefined);
+      if (path.indexOf('invest.byYear.') === 0 || path === 'housing.deduction.maxPerYear' || /^events\.\d+\.(every|until)$/.test(path)) setPath(D.input, path, undefined);
       else return;
     } else {
       var v = Number(raw); if (isNaN(v)) return;
@@ -2251,7 +2650,7 @@ function onChangeStructural(ev) {
   var t = ev.target;
   var path = t.getAttribute('data-path') || '';
   // 年齢列や生年など、表示の並びに影響する入力は確定時に描き直す
-  if (/^(household\.|income\.persons\.\d+\.points\.\d+\.age|snapshot\.year|endHeadAge|events\.\d+\.year|invest\.childNisa)/.test(path) || t.id === 'file-import') {
+  if (/^(household\.|income\.persons\.\d+\.points\.\d+\.age|snapshot\.year|endHeadAge|events\.\d+\.(year|every)|invest\.childNisa)/.test(path) || t.id === 'file-import') {
     if (t.id === 'file-import') return importFile(t);
     render();
   }
@@ -2287,6 +2686,15 @@ var ACTS = {
   delChild: function (a) { D.input.household.children.splice(+a, 1); D.input.snapshot.childNisa.splice(+a, 1); },
   addEvent: function () { D.input.events.push({ year: D.input.snapshot.year + 1, name: '新しいイベント', amount: 0 }); },
   delEvent: function (a) { D.input.events.splice(+a, 1); },
+  addRepeat: function () { D.input.events.push({ year: D.input.snapshot.year + 1, name: '車の買い替え', amount: 3000000, every: 10 }); },
+  addPrepay: function () { var h = D.input.housing; h.prepayments.push({ year: Math.max(h.purchaseYear, D.input.snapshot.year) + 5, amount: 1000000, type: 'term' }); },
+  delPrepay: function (a) { D.input.housing.prepayments.splice(+a, 1); },
+  addRate: function () { var h = D.input.housing; h.rateChanges.push({ year: Math.max(h.purchaseYear, D.input.snapshot.year) + 5, rate: Math.round(((Number(h.rate) || 0) + 0.01) * 100000) / 100000 }); },
+  delRate: function (a) { D.input.housing.rateChanges.splice(+a, 1); },
+  wdMode: function (a, el) { D.input.withdraw.mode = el.value === 'shortfall' ? 'shortfall' : 'fixed'; },
+  eduSel: function (a, el) { var x = a.split(','), c = D.input.household.children[+x[0]]; c.edu = c.edu || {}; if (el.value === 'none') delete c.edu[x[1]]; else c.edu[x[1]] = el.value; },
+  eduAll: function (a) { var x = a.split(','), c = D.input.household.children[+x[0]]; c.edu = x[1] === 'public' ? { k: 'public', e: 'public', j: 'public', h: 'public', u: 'national' } : {}; },
+  setReal: function (a) { D.settings.real = a === '1'; persistLocal(); recompute(); baseline = { at65: R.summary.at65 ? R.summary.at65.total : null }; render(); return 'norecalc'; },
   evKind: function (a, el) { var e = D.input.events[+a]; e.amount = Math.abs(e.amount) * (el.value === 'in' ? -1 : 1); },
   snapThisYear: function () { var m = new Date().getMonth(); D.input.snapshot.year = nowYear(); D.input.snapshot.month = m; toast('起点を' + nowYear() + '年' + (m ? m + '月末' : '初') + 'にしました。その時点の残高を入力してください'); },
   hlType: function (a, el) { D.input.housing.deduction.type = el.value; },
