@@ -11,13 +11,15 @@
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;border:1px solid transparent}.row.sel{border-color:var(--ac)}.row b{display:block;font-size:15px;font-weight:600}.row small{font-size:12px;color:var(--mu)}.row .v{font-size:19px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .bt{display:flex;gap:8px;margin:12px 14px}.bt button,.btn{flex:1;padding:13px;border-radius:99px;border:1px solid var(--ln);background:none;color:var(--tx);font-size:15px;font-family:inherit}.bt .p,.btn.p{background:var(--ac);border-color:var(--ac);color:#17171a;font-weight:700}
 .msg{margin:10px 16px;font-size:13px;color:var(--mu);line-height:1.6}.msg.ok{color:var(--gn)}.msg.er{color:#f0937a}
+.tabs{margin-bottom:0}.tabs button{padding:9px}.row.cf{cursor:default}.cfi{width:150px;background:none;border:0;border-bottom:2px solid var(--ac);color:var(--tx);font-size:20px;text-align:right;outline:none;font-variant-numeric:tabular-nums;font-family:inherit}
+.mb{background:none;border:1px solid var(--ln);color:var(--tx);border-radius:99px;width:44px;height:36px;font-size:18px}
 .cid input{width:100%;font-size:14px;padding:10px;border-radius:10px;border:1px solid var(--ln);background:#121417;color:var(--tx);margin:8px 0}
 </style></head><body>
-<div class="hd"><small id="st"></small><b>口座残高の入力</b><span>入力するとGoogleドライブに保存され、家のタブレットに反映されます</span></div>
+<div class="hd"><small id="st"></small><b id="ttl">口座残高の入力</b><span>入力するとGoogleドライブに保存され、家のタブレットに反映されます</span></div>
 <div id="main"></div>
 <script>
 var FILE='smartdisplay-bank.json',SCOPE='https://www.googleapis.com/auth/drive.file',DAPI='https://www.googleapis.com/drive/v3/files';
-var tok='',texp=0,fid='',data=null,sel=null,msg='',mt='';
+var tok='',texp=0,fid='',data=null,sel=null,msg='',mt='',mode='bk',cfm='';
 function $(s){return document.querySelector(s)}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
 function ymd(d){return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)}
@@ -45,11 +47,40 @@ function rec(same){var a=(data.acc||[]).filter(function(x){return x.id===sel})[0
   return api('https://www.googleapis.com/upload/drive/v3/files/'+fid+'?uploadType=media',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).then(function(){data=o})})
  .then(function(){var L=data.acc||[],i=L.findIndex(function(x){return x.id===a.id});msg=(a.n||'口座')+'を記録しました('+yen(v)+')。数分でタブレットに反映されます';mt='ok';if(i>=0&&i<L.length-1)sel=L[i+1].id;draw()})
  .catch(function(e){msg='保存できませんでした: '+e.message;mt='er';draw()})}
+// ---- 収入・支出(月ごと)。タブレットと同じ smartdisplay-bank.json の cf/cfd/cfc に書く(新しい入力時刻が勝つ)
+function ym(d){return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)}
+function defM(){var n=new Date();return n.getDate()<=10?ym(new Date(n.getFullYear(),n.getMonth()-1,1)):ym(n)}
+function cats(){var c=data.cfc||{};return{'in':c['in']||[],out:c.out||[]}}
+function cfv(m,id){var a=(data.cf||[]).filter(function(x){return x.m===m&&x.id===id}).sort(function(x,y){return(x.at||0)-(y.at||0)});return a.length?a[a.length-1].v:null}
+function cfdone(m){var a=(data.cfd||[]).filter(function(x){return x.m===m}).sort(function(x,y){return(x.at||0)-(y.at||0)});return a.length?!!a[a.length-1].done:false}
+function num(s){var t=String(s||'').replace(/[^\d]/g,'');return t===''?null:+t}
+function cfDraw(){var m=cfm||defM(),C=cats(),p=m.split('-'),ti=0,to=0;
+ function row(c,k){var v=cfv(m,c.id);if(v!=null){if(k==='in')ti+=v;else to+=v}return'<div class="box row cf"><div><b>'+esc(c.n)+'</b></div><div style="display:flex;align-items:center;gap:6px"><input class="cfi" data-id="'+esc(c.id)+'" type="text" inputmode="numeric" value="'+(v!=null?Number(v).toLocaleString('ja-JP'):'')+'" placeholder="0"><span class="v" style="font-size:14px">円</span></div></div>'}
+ var h='<div class="box" style="display:flex;justify-content:space-between;align-items:center"><button class="mb" data-cm="-1">‹</button><b style="font-size:18px">'+(+p[0])+'年'+(+p[1])+'月</b><button class="mb" data-cm="1">›</button></div>';
+ if(!C['in'].length&&!C.out.length)return h+'<div class="msg">収入・支出の項目がまだありません。タブレットのアプリを新しい版にすると、数分でここに出ます</div>';
+ h+='<div class="msg" style="margin-bottom:0">収入</div>'+C['in'].map(function(c){return row(c,'in')}).join('')+'<div class="msg" style="margin-bottom:0">支出</div>'+C.out.map(function(c){return row(c,'out')}).join('');
+ h+='<div class="msg">保存済み: 収入 '+yen(ti)+' − 支出 '+yen(to)+' = '+(ti-to>=0?'+':'−')+yen(Math.abs(ti-to))+' ・ '+(cfdone(m)?'<span style="color:var(--gn)">✓ 入力完了</span>':'入力中')+'</div>';
+ h+='<div class="bt"><button id="cfs">保存</button><button class="p" id="cfd">'+(cfdone(m)?'保存(完了のまま)':'保存して入力完了')+'</button></div>';
+ if(cfdone(m))h+='<div class="bt"><button id="cfu">入力完了を取り消す</button></div>';
+ return h+'<div class="msg '+mt+'">'+esc(msg||'金額を入れて保存してください。レポートは、全口座の残高と、前月の収入・支出の「入力完了」がそろってから作られます')+'</div>'}
+function cfSave(done){var m=cfm||defM(),vals=[].slice.call(document.querySelectorAll('.cfi')).map(function(i){return{id:i.dataset.id,v:num(i.value)}});
+ msg='保存しています…';mt='';draw();var at=Date.now();
+ (Date.now()<texp?Promise.resolve():login()).then(function(){return api(DAPI+'/'+fid+'?alt=media')}).then(function(r){return r.json()}).then(function(o){
+  o.cf=o.cf||[];vals.forEach(function(x){var cur=null;o.cf.forEach(function(e){if(e.m===m&&e.id===x.id&&(!cur||(e.at||0)>(cur.at||0)))cur=e});
+   if(cur?cur.v!==x.v:x.v!=null){o.cf=o.cf.filter(function(e){return!(e.m===m&&e.id===x.id)});o.cf.push({m:m,id:x.id,v:x.v,at:at,by:'phone'})}});
+  if(done!==null){o.cfd=(o.cfd||[]).filter(function(e){return e.m!==m});o.cfd.push({m:m,done:done?1:0,at:at})}
+  o.at=new Date().toISOString();
+  return api('https://www.googleapis.com/upload/drive/v3/files/'+fid+'?uploadType=media',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)}).then(function(){data=o})})
+ .then(function(){msg='保存しました'+(done?'(入力完了)':done===false?'(入力完了を取り消し)':'')+'。数分でタブレットに反映されます';mt='ok';draw()})
+ .catch(function(e){msg='保存できませんでした: '+e.message;mt='er';draw()})}
 function draw(){var m=$('#main');$('#st').textContent=tok?'● Googleでログイン中':'';
+ $('#ttl').textContent=mode==='cf'?'収入・支出の入力':'口座残高の入力';
  if(!cid()){m.innerHTML='<div class="box cid"><div class="msg" style="margin:0">ライフプランのアプリと同じ「クライアントID」を入れてください(このスマホでライフプランのアプリを使っていれば不要です)</div><input id="ci" placeholder="xxxxx.apps.googleusercontent.com"><button class="btn p" id="cis">保存</button></div>';return}
  if(!tok){m.innerHTML='<div class="bt"><button class="p" id="li">Googleでログイン</button></div>'+(msg?'<div class="msg '+mt+'">'+esc(msg)+'</div>':'');return}
  if(!data){m.innerHTML='<div class="msg '+mt+'">'+esc(msg)+'</div>'+(mt==='er'?'<div class="bt"><button id="rl">読み込み直す</button></div>':'');return}
- var L=data.acc||[],a=L.filter(function(x){return x.id===sel})[0],l=a?last(a.id):null,h='';
+ var tabs='<div class="bt tabs"><button class="'+(mode==='bk'?'p':'')+'" data-mode="bk">口座残高</button><button class="'+(mode==='cf'?'p':'')+'" data-mode="cf">収入・支出</button></div>';
+ if(mode==='cf'){m.innerHTML=tabs+cfDraw();[].slice.call(document.querySelectorAll('.cfi')).forEach(function(i){i.addEventListener('input',function(){var t=i.value.replace(/[^\d]/g,'');i.value=t?Number(t).toLocaleString('ja-JP'):''})});return}
+ var L=data.acc||[],a=L.filter(function(x){return x.id===sel})[0],l=a?last(a.id):null,h=tabs;
  if(a)h+='<div class="box ed"><div class="t">'+esc(a.n||'口座')+' ・ '+esc(own(a.own))+'</div><input id="v" type="text" inputmode="numeric" placeholder="'+(l?Number(l.v).toLocaleString('ja-JP'):'今の残高')+'"><div class="n">'+(l?'前回 '+yen(l.v)+'('+md(l.d)+')':'まだ入力がありません')+'</div><label>記録する日<input id="d" type="date" value="'+ymd(new Date())+'"></label></div>';
  h+=L.map(function(x){var y=last(x.id);return'<div class="box row'+(x.id===sel?' sel':'')+'" data-id="'+esc(x.id)+'"><div><b>'+esc(x.n||'口座')+'</b><small>'+esc(own(x.own))+(y?' ・ '+md(y.d):'')+'</small></div><div class="v">'+(y?yen(y.v):'—')+'</div></div>'}).join('');
  h+='<div class="bt"><button id="same">変更なしで記録</button><button class="p" id="ok">記録する</button></div><div class="msg '+mt+'">'+esc(msg||'口座をタップして選び、残高を入れて「記録する」を押してください')+'</div>';
@@ -59,6 +90,9 @@ document.addEventListener('click',function(e){var t=e.target,r;
  if(t.id==='li'){login().then(load).catch(function(x){msg=x.message;mt='er';draw()});return}
  if(t.id==='rl'){load();return}
  if(t.id==='ok'){rec(false);return}if(t.id==='same'){rec(true);return}
- if(r=t.closest('.row')){sel=r.dataset.id;msg='';draw();var v=$('#v');if(v)v.focus()}});
+ if(t.dataset&&t.dataset.mode){mode=t.dataset.mode;msg='';mt='';draw();return}
+ if(t.dataset&&t.dataset.cm){var p=(cfm||defM()).split('-');cfm=ym(new Date(+p[0],+p[1]-1+(+t.dataset.cm),1));msg='';mt='';draw();return}
+ if(t.id==='cfs'){cfSave(null);return}if(t.id==='cfd'){cfSave(true);return}if(t.id==='cfu'){cfSave(false);return}
+ if((r=t.closest('.row'))&&!r.classList.contains('cf')){sel=r.dataset.id;msg='';draw();var v=$('#v');if(v)v.focus()}});
 draw();
 </script></body></html>
